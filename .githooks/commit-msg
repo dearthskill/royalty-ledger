@@ -1,0 +1,11 @@
+#!/bin/sh
+# Removes AI-attribution lines from every commit message so that no AI tool
+# ever shows up as a co-author on GitHub. Active when core.hooksPath=.githooks
+# (scripts/setup_git_guards.sh does that).
+f="$1"
+tmp="$(mktemp)"
+grep -v -i -E '^co-authored-by:.*(claude|anthropic)|^claude-session:|generated with.*claude|^https://claude\.ai/code/session_' "$f" > "$tmp" || true
+# drop trailing blank lines left behind
+awk '{a[NR]=$0} END{n=NR; while(n>0 && a[n]=="") n--; for(i=1;i<=n;i++) print a[i]}' "$tmp" > "$f"
+rm -f "$tmp"
+exit 0

@@ -3,7 +3,8 @@ import { NextRequest } from 'next/server';
 import { POST as login } from '@/app/api/auth/login/route';
 
 export const PASSWORD = 'Password@123';
-type Handler = (req: Request, ctx: { params: Promise<Record<string, string>> }) => Promise<Response>;
+// `never` lets handlers with any params type be passed in (parameters are contravariant).
+type Handler = (req: Request, ctx: { params: Promise<never> }) => Promise<Response>;
 
 export function request(path: string, opts: { method?: string; cookie?: string; body?: unknown } = {}) {
   const headers: Record<string, string> = {};
@@ -18,7 +19,7 @@ export function request(path: string, opts: { method?: string; cookie?: string; 
 
 export async function call(handler: Handler, path: string,
   opts: { method?: string; cookie?: string; body?: unknown; params?: Record<string, string> } = {}) {
-  const res = await handler(request(path, opts), { params: Promise.resolve(opts.params ?? {}) });
+  const res = await handler(request(path, opts), { params: Promise.resolve(opts.params ?? {}) as Promise<never> });
   const text = await res.text();
   return { status: res.status, body: text ? JSON.parse(text) : null, headers: res.headers };
 }

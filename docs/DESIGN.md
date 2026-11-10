@@ -151,6 +151,17 @@ erDiagram
 ```
 `audit_log` has no foreign keys on purpose: it records rows of several tables and must outlive them.
 
+### MongoDB collections (database `royalty_events`, `mongo/init/01_init.js`)
+| Collection | Document | Indexes |
+|---|---|---|
+| `usage_batches` | `{ _id, period_id, platform, source_file, uploaded_by, uploaded_at, row_count, status: uploaded\|cleaned\|disputed\|aggregated, notes: [{ at, by, kind, text }] }` | `{period_id, status}` |
+| `usage_events` | `{ batch_id, period_id, track_id, platform, plays, listener_hash, played_at, device, status: valid\|void, void_reason, raw }` | `{period_id, status}`, `{batch_id}`, `{track_id, platform, listener_hash, played_at}` |
+
+Both have strict `$jsonSchema` validators. `raw` holds whatever extra fields a platform sends (Spotify playlist and
+premium flag, YouTube watch seconds and ad support, Apple Music storefront and lossless), which is the main reason
+these records live in a document store. `track_id`, `platform`, `period_id` and `uploaded_by` refer to PostgreSQL
+rows by value; they are checked when a report is imported and again before aggregation.
+
 ## 5. Relational schema
 Underlined = primary key, * = foreign key. Full DDL: `sql/init/01_schema.sql`.
 

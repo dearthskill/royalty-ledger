@@ -15,3 +15,11 @@ Files: `sql/init/01_schema.sql`, `02_logic.sql`, `03_roles.sql`, `04_seed.sql`, 
 * What stops two active contracts for one track, even under concurrent requests? -> `uq_contract_one_active` partial unique index, test T6
 * Why does `v_artist_statement` use `security_invoker = true`? -> `02_logic.sql` views, `03_roles.sql` policies, test T16
 * How is the audit actor known when the app connects with a single login? -> `fn_audit` (SECURITY DEFINER, `app.user_id`), test T18
+
+## WP0b: MongoDB foundation and API contract
+Files: `mongo/init/01_init.js`, `mongo/pipelines/usage_ops.js`, `mongo/seed/seed_events.js`, `mongo/tests/usage_ops.test.js`, `docs/API_CONTRACT.md`
+* Why are usage events in MongoDB and not a PostgreSQL table? What is in `raw`? -> `docs/DESIGN.md` section 3, `01_init.js` header
+* How does `findDuplicates` decide two events are the same play, and which one is kept? -> `usage_ops.js` (`$group` on 4 keys, `$sort: {_id: 1}`, `keep`)
+* Which index serves duplicate detection, and which one serves `aggregateUsage`? -> `01_init.js` indexes
+* Without multi-document transactions, how does `ingest` avoid a half-stored batch? -> `ingest` compensating delete, test "removes the batch again"
+* What exact shape crosses from MongoDB to PostgreSQL, and where is it validated? -> `aggregateUsage`, `docs/API_CONTRACT.md` "Interface"

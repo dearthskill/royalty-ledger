@@ -84,6 +84,7 @@ Pages are guarded by `proxy.ts` / `middleware.ts`: no session -> redirect to `/l
 |---|---|---|---|---|
 | GET | /api/tracks/:id/contracts | A, U | | `{ contracts: [contract] }` newest version first |
 | POST | /api/tracks/:id/contracts | A | | 201 `{ contract }`: new draft via `create_contract_draft` (copies the active splits); 409 if a draft exists |
+| GET | /api/contracts/:id | A, U | | `{ contract }`; 404 |
 | PUT | /api/contracts/:id/splits | A | `{ splits: [{ artist_id, share_pct }] }` | `{ contract }`; replaces the set; a draft may total less or more than 100; 409 if not a draft |
 | POST | /api/contracts/:id/activate | A | | `{ contract }` via `activate_contract`; 409 if not a draft or total != 100 |
 | DELETE | /api/contracts/:id | A | | 204; 409 if not a draft |

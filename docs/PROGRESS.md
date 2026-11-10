@@ -12,7 +12,7 @@ Owner A = Rohit, B = Shana. Status: `todo` -> `in progress` -> `PR open` -> `mer
 | 1 | Next.js scaffold + auth | A | feat/a-1-nextjs-auth | #4 | merged | 2026-11-10 |
 | 2 | Usage ingestion API (MongoDB R/U/D) | B | | | todo | |
 | 3 | Catalogue API | A | feat/a-3-catalogue-api | #5 | merged | 2026-11-10 |
-| 4 | Contracts API | A | | | todo | |
+| 4 | Contracts API | A | feat/a-4-contracts-api | #6 | merged | 2026-11-10 |
 | 5 | Aggregate, close, ledger, payouts | B | | | todo | |
 | 6 | Admin UI: catalogue and contracts | A | | | todo | |
 | 7 | Admin UI: usage and payouts | B | | | todo | |

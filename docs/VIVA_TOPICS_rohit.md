@@ -55,3 +55,9 @@ Files: `app/admin/artists/*`, `app/admin/tracks/**`, `components/{ShareEditor,Se
 * After activating a draft, where does the new effective split on screen come from? -> `TrackDetail` reload -> `GET /api/tracks/:id/effective-split` -> `resolve_split`
 * How does the search box reach the database, and what index serves it? -> `SearchBox` -> `/api/search` -> `search_catalog` -> GIN `idx_track_search`
 * Live modification to try: show each artist's effective % next to the draft editor (call `resolve_contract_split` for the draft).
+
+## WP10a: Report slice A
+Files: `docs/REPORT.md` sections 1-8, `scripts/data_dictionary.sh`
+* Which catalog views/tables does the data dictionary come from, and how are composite UNIQUE keys shown? -> `scripts/data_dictionary.sh`
+* Defend BCNF for `ledger_entry` given it copies `plays` and `effective_pct`. -> REPORT section 4
+* Name the two layers of authorisation and show a request that the second layer stops on its own. -> REPORT section 7, `tests/api/auth.test.ts` withDb tests

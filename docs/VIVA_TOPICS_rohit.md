@@ -39,3 +39,11 @@ Files: `lib/catalog.ts`, `app/api/artists/**`, `app/api/tracks/**`, `app/api/sea
 * Why does an artist see `active_version: null` in the track list? -> `trackSelect` in `lib/catalog.ts`, no grant on `contract` for `rl_artist`
 * How is `share_pct` validated before it reaches NUMERIC(5,2), and why are percentages sent as strings? -> `SharePct` in `lib/catalog.ts`
 * Live modification to try: allow 3 decimals in group shares (column type + zod rule).
+
+## WP4: Contracts API
+Files: `lib/contracts.ts`, `app/api/tracks/[id]/{contracts,effective-split,history}`, `app/api/contracts/**`, `tests/api/contracts.test.ts`
+* Which layer enforces "exactly 100% to activate": the route or the database? Show both the function and the trigger. -> `activate_contract`, `fn_contract_guard`
+* Why does `PUT /splits` check `status` itself when a trigger exists? -> comment in `app/api/contracts/[id]/splits/route.ts` (empty set fires no row trigger)
+* How does the history endpoint still find the splits of a draft that was later deleted? -> `ids` CTE over `audit_log` in the history route
+* Walk through `effective-split` for Midnight Static: where do 35 / 30 / 21 / 14 come from? -> `resolve_contract_split`, test "resolves nested groups"
+* Live modification to try: return the superseded version's effective split too (call `resolve_contract_split(contract_id)`).

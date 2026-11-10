@@ -14,7 +14,7 @@ Owner A = Rohit, B = Shana. Status: `todo` -> `in progress` -> `PR open` -> `mer
 | 3 | Catalogue API | A | feat/a-3-catalogue-api | #5 | merged | 2026-11-10 |
 | 4 | Contracts API | A | feat/a-4-contracts-api | #6 | merged | 2026-11-10 |
 | 5 | Aggregate, close, ledger, payouts | B | | | todo | |
-| 6 | Admin UI: catalogue and contracts | A | | | todo | |
+| 6 | Admin UI: catalogue and contracts | A | feat/a-6-admin-catalogue-ui | #7 | merged | 2026-11-10 |
 | 7 | Admin UI: usage and payouts | B | | | todo | |
 | 8 | Artist and auditor views | B | | | todo | |
 | 9 | End-to-end scenario + API test sweep | B | | | todo | |

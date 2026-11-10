@@ -31,3 +31,11 @@ Files: `lib/db.ts`, `lib/session.ts`, `lib/http.ts`, `lib/mongo.ts`, `proxy.ts`,
 * Why httpOnly + SameSite=Lax for the session cookie, and what is inside the JWT? -> `lib/session.ts`, login route
 * Why does a wrong password and an unknown e-mail give the same message and take the same time? -> `DUMMY_HASH` in `app/api/auth/login/route.ts`
 * How is a PostgreSQL trigger error turned into an HTTP status? -> `PG_STATUS` in `lib/http.ts`
+
+## WP3: Catalogue API
+Files: `lib/catalog.ts`, `app/api/artists/**`, `app/api/tracks/**`, `app/api/search/route.ts`, `tests/api/catalogue.test.ts`
+* `PUT /api/artists/:id/members` deletes and re-inserts rows one by one; why does the 100% rule not fail halfway? -> deferred trigger + `SET CONSTRAINTS ALL IMMEDIATE` in the route
+* What happens to the old member set if the new one totals 99%? -> withDb ROLLBACK, test "PUT replaces the set atomically"
+* Why does an artist see `active_version: null` in the track list? -> `trackSelect` in `lib/catalog.ts`, no grant on `contract` for `rl_artist`
+* How is `share_pct` validated before it reaches NUMERIC(5,2), and why are percentages sent as strings? -> `SharePct` in `lib/catalog.ts`
+* Live modification to try: allow 3 decimals in group shares (column type + zod rule).

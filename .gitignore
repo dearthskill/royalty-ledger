@@ -11,3 +11,5 @@ coverage/
 .vscode/
 .idea/
 .claude/settings.local.json
+next-env.d.ts
+*.tsbuildinfo

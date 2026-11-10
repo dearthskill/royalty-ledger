@@ -26,11 +26,13 @@ contracts with version history, a closed August 2026 period (ledger + payouts) a
 Rebuild everything from scratch: `scripts/db_reset.sh`.
 
 ## Run the application
-The Next.js app is added by the team in `app/` (see `docs/WORK_SPLIT.md`):
 ```bash
 npm install
-npm run dev                     # http://localhost:3000
+npm run dev                     # http://localhost:3000  (or: npm run build && npm start)
 ```
+Log in as `admin@royalty.test`, `auditor@royalty.test` or an artist (`nova@`, `kai@`, `mira@`, `lina@royalty.test`),
+password `Password@123`. Screenshots for the docs: `node scripts/screenshot.mjs <name> <path> [email]`
+(needs `npx playwright install chromium` once).
 
 ## Git setup (once per clone)
 ```bash
@@ -41,7 +43,7 @@ bash scripts/setup_git_guards.sh
 ## Tests
 ```bash
 scripts/test_db.sh              # uses DATABASE_URL from .env
-npm install && npm test         # Vitest: MongoDB pipeline tests (scratch database, dropped afterwards)
+npm test                        # Vitest: API + MongoDB tests on scratch databases (dropped afterwards)
 ```
 `scripts/test_db.sh` builds a scratch database from `sql/init/`, runs 20 groups of checks (`sql/tests/test_logic.sql`) covering
 the split triggers, contracts, period close, immutability, payouts, audit trail, search and role-based
@@ -56,6 +58,9 @@ mongo/init/      collections, validators, indexes
 mongo/pipelines/ aggregation + void/dispute/purge operations
 mongo/seed/      demo usage events
 mongo/tests/     Vitest tests for the pipelines
-docs/            design, API contract, work split
+app/             Next.js pages and API route handlers
+lib/             db (withDb), mongo, session, http helpers
+tests/           Vitest API tests and setup
+docs/            design, API contract, work split, screenshots
 scripts/         db_reset.sh, test_db.sh
 ```

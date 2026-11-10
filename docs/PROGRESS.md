@@ -9,7 +9,7 @@ Owner A = Rohit, B = Shana. Status: `todo` -> `in progress` -> `PR open` -> `mer
 | Z | Bootstrap: tools, repo, collaborator invite | A | feat/a-z-bootstrap | #1 | merged | 2026-11-10 |
 | 0 | Database foundation (PostgreSQL) | A | feat/a-0-database-foundation | #2 | merged | 2026-11-10 |
 | 0b | MongoDB foundation + API contract | A | feat/a-0b-mongo-foundation | #3 | merged | 2026-11-10 |
-| 1 | Next.js scaffold + auth | A | | | todo | |
+| 1 | Next.js scaffold + auth | A | feat/a-1-nextjs-auth | #4 | merged | 2026-11-10 |
 | 2 | Usage ingestion API (MongoDB R/U/D) | B | | | todo | |
 | 3 | Catalogue API | A | | | todo | |
 | 4 | Contracts API | A | | | todo | |

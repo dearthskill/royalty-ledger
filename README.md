@@ -4,6 +4,7 @@ A Next.js application for independent music royalties. PostgreSQL holds contract
 append-only payout ledger and the audit trail; MongoDB holds high-volume, platform-specific usage
 events that are cleaned and aggregated before each payout. DBMS Level 3 mini project, PES University.
 
+* Project report: [`docs/REPORT.md`](docs/REPORT.md)
 * Design, ER diagram, database justification: [`docs/DESIGN.md`](docs/DESIGN.md)
 * API and the PostgreSQL/MongoDB interface: [`docs/API_CONTRACT.md`](docs/API_CONTRACT.md)
 * Who builds what, Git workflow: [`docs/WORK_SPLIT.md`](docs/WORK_SPLIT.md)

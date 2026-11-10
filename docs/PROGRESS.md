@@ -7,7 +7,7 @@ Owner A = Rohit, B = Shana. Status: `todo` -> `in progress` -> `PR open` -> `mer
 | WP | Title | Owner | Branch | PR | Status | Date |
 |---|---|---|---|---|---|---|
 | Z | Bootstrap: tools, repo, collaborator invite | A | feat/a-z-bootstrap | #1 | merged | 2026-11-10 |
-| 0 | Database foundation (PostgreSQL) | A | | | todo | |
+| 0 | Database foundation (PostgreSQL) | A | feat/a-0-database-foundation | #2 | merged | 2026-11-10 |
 | 0b | MongoDB foundation + API contract | A | | | todo | |
 | 1 | Next.js scaffold + auth | A | | | todo | |
 | 2 | Usage ingestion API (MongoDB R/U/D) | B | | | todo | |
@@ -28,3 +28,7 @@ Owner A = Rohit, B = Shana. Status: `todo` -> `in progress` -> `PR open` -> `mer
   which pins pushes to Rohit's account regardless of the active `gh` account and avoids changing global git config.
   Shana (`shanasusanvarghese-coder`) was re-invited with write access on 2026-11-10 (the Nov 2 invite had expired);
   she must accept it before her first session.
+* WP0: the Nov 2 SQL was rewritten to match the CLAUDE.md schema (platform keyed by code, period labels, share paths,
+  `app_user.artist_id`), keeping its trigger logic. Docker host ports are configurable (`POSTGRES_PORT`, `MONGO_PORT`)
+  because a local Homebrew PostgreSQL already uses 5432 on Rohit's laptop. **Open item:** `docs/er-diagram.png` still shows
+  the old schema; re-export it from the Mermaid block in `docs/DESIGN.md` (e.g. `npx @mermaid-js/mermaid-cli`).

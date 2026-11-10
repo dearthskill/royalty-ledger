@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { Role, Session } from '@/lib/session';
 import { LogoutButton } from './LogoutButton';
+import { SearchBox } from './SearchBox';
 
 // Role-aware navigation: each role sees only the screens it may open.
 const LINKS: Record<Role, { href: string; label: string }[]> = {
@@ -26,6 +27,7 @@ export function Nav({ session }: { session: Session | null }) {
         ))}
         {session && (
           <div className="ml-auto flex items-center gap-3 text-sm">
+            {session.role === 'admin' && <SearchBox />}
             <span className="text-slate-500">{session.email} · {session.role}</span>
             <LogoutButton />
           </div>

@@ -15,11 +15,12 @@ Node.js 20+, Docker (with Compose), Git. Optional: `mongosh` and `psql` for seed
 ```bash
 git clone <repo-url> && cd royalty-ledger
 cp .env.example .env            # then edit the passwords and AUTH_SECRET
+                                # (if port 5432 is taken locally, set POSTGRES_PORT=5433 and use it in DATABASE_URL)
 docker compose up -d            # PostgreSQL 16 + MongoDB 7; sql/init and mongo/init run on first start
 mongosh "$MONGODB_URI" mongo/seed/seed_events.js    # demo usage events (optional)
 ```
-PostgreSQL is seeded with demo users, artists (including nested groups), tracks, contracts and an open
-September 2026 period. Demo password for every seeded login: `Password@123`
+PostgreSQL is seeded with demo users, artists (including a group nested inside a group), 8 tracks,
+contracts with version history, a closed August 2026 period (ledger + payouts) and an open September 2026 period. Demo password for every seeded login: `Password@123`
 (`admin@royalty.test`, `auditor@royalty.test`, `nova@royalty.test`, ...).
 
 Rebuild everything from scratch: `scripts/db_reset.sh`.
@@ -39,16 +40,17 @@ bash scripts/setup_git_guards.sh
 
 ## Tests
 ```bash
-PGHOST=localhost PGPORT=5432 PGUSER=royalty PGPASSWORD=<from .env> scripts/test_db.sh
+scripts/test_db.sh              # uses DATABASE_URL from .env
 ```
-Builds a scratch database from `sql/init/` and runs 15 groups of checks covering the split triggers,
-period close, immutability, payouts, audit trail, search and role-based access.
+Builds a scratch database from `sql/init/`, runs 20 groups of checks (`sql/tests/test_logic.sql`) covering
+the split triggers, contracts, period close, immutability, payouts, audit trail, search and role-based
+access, then drops the scratch database. DDL demo: `psql "$DATABASE_URL" -f sql/demo/ddl_demo.sql`.
 
 ## Repository layout
 ```
 sql/init/        schema, logic (triggers, procedure, views), roles, seed
 sql/tests/       database test suite
-sql/demo/        important queries for the viva
+sql/demo/        DDL demo and important queries for the viva
 mongo/init/      collections, validators, indexes
 mongo/pipelines/ aggregation + void/dispute/purge operations
 mongo/seed/      demo usage events

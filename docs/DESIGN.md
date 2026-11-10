@@ -35,133 +35,174 @@ Objectives
 | Platform usage events and upload batches | **MongoDB** | Spotify/YouTube/Apple/radio reports have different fields; volume is high and append-heavy; records are corrected after arrival (void, dispute, purge). Schemaless documents plus aggregation pipelines fit; forcing this into relational columns would mean sparse tables or an EAV model. |
 
 The two stores meet at one narrow interface: the Mongo aggregation output
-`{ track_id, platform, plays }` is upserted into `usage_summary` (see API_CONTRACT.md).
+`{ track_id, platform, plays }` replaces the period's rows in `usage_summary` (see API_CONTRACT.md).
+The boundary is deliberately small and validated: unknown track ids or platform codes are rejected
+before anything is written, so the relational side never holds data the document side invented.
 
-## 4. ER diagram (also rendered as `docs/er-diagram.png`)
+## 4. ER diagram (rendered as `docs/er-diagram.png`)
 ```mermaid
 erDiagram
-    app_user ||--o| artist : "may be"
+    artist ||--o| app_user : "logs in as"
     artist ||--o{ group_member : "group has"
-    artist ||--o{ group_member : "is member"
-    track ||--o{ contract : has
-    contract ||--o{ contract_split : divides
-    artist ||--o{ contract_split : "paid by"
-    payout_period ||--o{ usage_summary : contains
-    track ||--o{ usage_summary : "plays of"
+    artist ||--o{ group_member : "is member of"
+    artist ||--o{ track : "primary artist of"
+    track ||--o{ contract : "has versions"
+    contract ||--|{ contract_split : "divides into"
+    artist ||--o{ contract_split : "receives"
+    payout_period ||--o{ usage_summary : "contains"
+    track ||--o{ usage_summary : "played"
     platform ||--o{ usage_summary : "on"
-    payout_period ||--o{ ledger_entry : produces
+    payout_period ||--o{ ledger_entry : "produces"
     contract ||--o{ ledger_entry : "priced by"
     track ||--o{ ledger_entry : "for"
     platform ||--o{ ledger_entry : "via"
-    artist ||--o{ ledger_entry : earns
-    payout_period ||--o{ payout : generates
-    artist ||--o{ payout : receives
+    artist ||--o{ ledger_entry : "earns"
+    payout_period ||--o{ payout : "generates"
+    artist ||--o{ payout : "is paid"
 
-    app_user {
-        int user_id PK
-        string email UK
-        string role
-    }
     artist {
         int artist_id PK
-        int user_id FK
-        string stage_name UK
-        string kind
+        varchar name UK
+        text kind "solo | group"
+        varchar email UK
+        tsvector search_vector
+    }
+    app_user {
+        int user_id PK
+        varchar email UK
+        text password_hash
+        text role "admin | artist | auditor"
+        int artist_id FK,UK "iff role = artist"
     }
     group_member {
-        int group_id PK, FK
-        int member_id PK, FK
-        numeric share_pct
+        int group_id PK,FK
+        int member_id PK,FK
+        numeric share_pct "0 < x <= 100, sum = 100"
+    }
+    platform {
+        varchar code PK
+        varchar name
+        numeric rate_per_play "> 0"
     }
     track {
         int track_id PK
-        string isrc UK
-        string title
+        varchar title
+        char isrc UK
+        int primary_artist_id FK
+        date released_on
+        tsvector search_vector
     }
     contract {
         int contract_id PK
         int track_id FK
-        int version
-        string status
+        int version "UK with track_id"
+        text status "draft | active | superseded"
+        timestamptz activated_at
     }
     contract_split {
-        int contract_id PK, FK
-        int artist_id PK, FK
+        int contract_id PK,FK
+        int artist_id PK,FK
         numeric share_pct
-    }
-    platform {
-        int platform_id PK
-        string code UK
-        numeric rate_per_play
     }
     payout_period {
         int period_id PK
-        date period_start
-        date period_end
-        string status
+        varchar label UK
+        date starts_on
+        date ends_on
+        text status "open | closed"
+        timestamptz closed_at
     }
     usage_summary {
-        int period_id PK, FK
-        int track_id PK, FK
-        int platform_id PK, FK
+        int period_id PK,FK
+        int track_id PK,FK
+        varchar platform_code PK,FK
         bigint plays
     }
     ledger_entry {
         bigint entry_id PK
         int period_id FK
         int track_id FK
+        int contract_id FK
         int artist_id FK
+        varchar platform_code FK
+        bigint plays
+        numeric effective_pct
         numeric amount
+        text share_path
     }
     payout {
         int payout_id PK
         int period_id FK
         int artist_id FK
-        numeric total_amount
-        string status
+        numeric amount
+        text status "pending | paid"
+        timestamptz paid_at
     }
     audit_log {
         bigint audit_id PK
-        string table_name
-        string action
-        jsonb old_data
-        jsonb new_data
+        text table_name
+        text op
+        text row_pk
+        jsonb before
+        jsonb after
+        text actor
+        timestamptz at
     }
 ```
-MongoDB (database `royalty_events`): `usage_batches` (one per uploaded report; embedded `notes[]`)
-and `usage_events` (one per report row; `platform_payload` varies by platform; `track_id` and
-`platform` reference PostgreSQL by value). Details in `mongo/init/01_init.js`.
+`audit_log` has no foreign keys on purpose: it records rows of several tables and must outlive them.
 
-## 5. Integrity and advanced features (where to find them)
+## 5. Relational schema
+Underlined = primary key, * = foreign key. Full DDL: `sql/init/01_schema.sql`.
+
+| Relation | Attributes | Keys and constraints |
+|---|---|---|
+| artist | <u>artist_id</u>, name, kind, email, created_at, search_vector | name UNIQUE; email UNIQUE NULL; kind IN (solo, group) |
+| app_user | <u>user_id</u>, email, password_hash, role, artist_id*, created_at | email UNIQUE; artist_id UNIQUE -> artist; CHECK (role = 'artist') = (artist_id IS NOT NULL) |
+| group_member | <u>group_id*</u>, <u>member_id*</u>, share_pct | both -> artist; group_id <> member_id; 0 < share_pct <= 100; trigger: group is a group, no cycle; deferred trigger: shares = 100 |
+| platform | <u>code</u>, name, rate_per_play | code ~ `^[a-z_]+$`; rate_per_play > 0 |
+| track | <u>track_id</u>, title, isrc, primary_artist_id*, released_on, search_vector | isrc UNIQUE, ISRC format CHECK; GIN index on search_vector |
+| contract | <u>contract_id</u>, track_id*, version, status, activated_at, created_at | UNIQUE (track_id, version); partial UNIQUE: one active and one draft per track; (status = draft) = (activated_at IS NULL) |
+| contract_split | <u>contract_id*</u>, <u>artist_id*</u>, share_pct | 0 < share_pct <= 100; trigger: editable only while the contract is a draft |
+| payout_period | <u>period_id</u>, label, starts_on, ends_on, status, closed_at | label UNIQUE; ends_on > starts_on; EXCLUDE overlapping date ranges; trigger: closed is final |
+| usage_summary | <u>period_id*</u>, <u>track_id*</u>, <u>platform_code*</u>, plays | plays >= 0; trigger: no change once the period is closed |
+| ledger_entry | <u>entry_id</u>, period_id*, track_id*, contract_id*, artist_id*, platform_code*, plays, effective_pct, amount, share_path, created_at | UNIQUE (period, track, platform, artist, share_path); amount >= 0; trigger: UPDATE/DELETE always fail |
+| payout | <u>payout_id</u>, period_id*, artist_id*, amount, status, paid_at | UNIQUE (period_id, artist_id); (status = paid) = (paid_at IS NOT NULL); trigger: only pending -> paid, never deleted |
+| audit_log | <u>audit_id</u>, table_name, op, row_pk, before, after, actor, at | op IN (INSERT, UPDATE, DELETE) |
+
+Normalisation: every non-key attribute depends on the whole key and nothing else (3NF/BCNF). The ledger
+deliberately copies `plays` and `effective_pct` at close time: it is a historical record, so it must not
+change when a contract or usage row is later corrected (and those cannot change for a closed period anyway).
+
+## 6. Integrity and advanced features (where to find them)
 | Concept | Implementation | File |
 |---|---|---|
-| Constraints | CHECK (shares, ISRC, email), UNIQUE, EXCLUDE (no overlapping periods), partial unique index (one active contract per track) | `sql/init/01_schema.sql` |
-| Trigger | Contract activation requires shares = 100; split edits frozen once active; group member shares = 100 (deferred); cycle prevention | `sql/init/02_logic.sql` |
-| Trigger | Ledger append-only, closed periods immutable, payout amounts frozen | `sql/init/02_logic.sql` |
-| Trigger | Generic audit trail (`fn_audit`) on contract, split, group, period, payout, track | `sql/init/02_logic.sql` |
-| Recursive CTE | `resolve_split()` expands nested groups to solo payees | `sql/init/02_logic.sql` |
-| Stored procedure | `close_payout_period()` builds ledger + payouts in one transaction | `sql/init/02_logic.sql` |
-| Functions | `activate_contract`, `create_contract_draft`, `mark_payout_paid`, `search_catalog` | `sql/init/02_logic.sql` |
-| Transactions + locking | `FOR UPDATE` in period close and payout; rollback on any failure | `sql/init/02_logic.sql` |
-| Views | `v_active_split`, `v_contract_overview`, `v_artist_statement`, `v_period_summary` | `sql/init/02_logic.sql` |
-| Indexing | composite B-tree on ledger/usage, GIN full-text | `sql/init/01_schema.sql` |
-| Full-text search | `to_tsvector` GIN index + `search_catalog()` | both |
-| DB-level access control | roles `rl_admin/rl_artist/rl_auditor`, GRANTs, row-level security | `sql/init/03_roles.sql` |
-| NoSQL aggregation | `aggregateUsagePipeline` ($match/$group/$project) | `mongo/pipelines/usage_ops.js` |
-| NoSQL R/U/D | read (aggregate, find duplicates), update (void, dispute notes via $push), delete (purge voided, TTL index) | `mongo/pipelines/usage_ops.js` |
+| Constraints | CHECK (shares, ISRC, e-mail, role/artist), UNIQUE, EXCLUDE (no overlapping periods), partial unique indexes | `sql/init/01_schema.sql` |
+| Triggers | contract lifecycle; splits draft-only; group shares = 100 (deferred constraint trigger); cycle prevention | `sql/init/02_logic.sql` |
+| Triggers | ledger append-only; closed periods and their usage immutable; payouts pay-once and never deleted | `sql/init/02_logic.sql` |
+| Trigger | generic audit trail `fn_audit` (before/after JSONB, acting user) on contract, contract_split, group_member, payout_period, payout | `sql/init/02_logic.sql` |
+| Recursive CTE | `resolve_contract_split` / `resolve_split` expand nested groups to solo payees with a readable share path | `sql/init/02_logic.sql` |
+| Stored procedure | `close_payout_period` builds ledger + payouts in one transaction | `sql/init/02_logic.sql` |
+| Functions | `create_contract_draft`, `activate_contract`, `mark_payout_paid`, `search_catalog` | `sql/init/02_logic.sql` |
+| Transactions + locking | `FOR UPDATE` on period, contract and payout rows; any failure rolls back everything | `sql/init/02_logic.sql` |
+| Views | `v_active_split`, `v_contract_overview`, `v_artist_statement`, `v_period_totals` (all `security_invoker`) | `sql/init/02_logic.sql` |
+| Indexing | composite B-tree on ledger/usage/payout, GIN full-text on track and artist | `sql/init/01_schema.sql` |
+| DB-level access control | roles `rl_admin`, `rl_artist`, `rl_auditor`; GRANTs; row-level security on `ledger_entry` and `payout` | `sql/init/03_roles.sql` |
+| DDL demo | CREATE / ALTER ADD COLUMN + CONSTRAINT / CREATE INDEX / DROP | `sql/demo/ddl_demo.sql` |
+| NoSQL | collections, validators, indexes, aggregation, void/dispute/purge | `mongo/` |
 
-## 6. Architecture
+## 7. Architecture
 ```
 Browser (Next.js pages: admin / artist / auditor)
    |
-Next.js Route Handlers (auth, validation, role checks)
-   |-- pg  ->  PostgreSQL  (SET LOCAL ROLE rl_*, app.user_id, app.artist_id per request)
-   '-- mongodb driver -> MongoDB (usage_batches, usage_events)
+Next.js Route Handlers (session check, zod validation, role checks)
+   |-- pg      -> PostgreSQL  (per request: BEGIN; SET LOCAL ROLE rl_*; app.user_id; app.artist_id)
+   '-- mongodb -> MongoDB     (usage_batches, usage_events)
 ```
-Money flow: upload batch (Mongo) -> clean (void/dispute/purge) -> aggregate -> `usage_summary`
-(Postgres) -> `CALL close_payout_period()` -> `ledger_entry` + `payout` -> `mark_payout_paid`.
+Money flow: upload batch (Mongo) -> clean (void duplicates/bot plays, dispute, purge) -> aggregate per
+track+platform -> `usage_summary` (Postgres) -> `CALL close_payout_period(period)` -> `ledger_entry` +
+`payout` -> `mark_payout_paid(payout)`.
 
-## 7. Known simplifications
+## 8. Known simplifications
 * Per-play rates are fixed per platform (not per period or country).
-* Amounts are rounded to 4 decimals per ledger line; no residual-cent reallocation.
-* Platforms are loaded from a reference table, not discovered from uploads.
+* Ledger lines are rounded to 4 decimals and payouts to 2; no residual-cent reallocation.
+* Platforms are a reference table, not discovered from uploads.

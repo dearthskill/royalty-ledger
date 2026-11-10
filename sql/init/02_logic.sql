@@ -1,66 +1,90 @@
 -- =====================================================================
--- Business logic: functions, triggers, stored procedure, views
+-- Business logic: triggers, functions, the period-close procedure, views.
+-- Every business error is RAISE EXCEPTION with a readable message (SQLSTATE
+-- P0001); the app shows that text to the user unchanged.
 -- =====================================================================
 
 -- ---------------------------------------------------------------------
--- Recursive split resolution.
--- Expands group artists through group_member (any depth up to 8) and returns
--- the solo beneficiaries with their effective percentage of the track.
--- Returns NO ROWS if the result does not total 100% (caller treats as error).
+-- Split resolution (recursive CTE)
+-- Expands a contract's splits through nested groups, multiplying shares on
+-- the way down, and returns one row per path that ends at a solo artist.
 -- ---------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION resolve_split(p_contract_id INT)
-RETURNS TABLE (artist_id INT, effective_pct NUMERIC)
-LANGUAGE plpgsql STABLE AS $$
-BEGIN
-    RETURN QUERY
-    WITH RECURSIVE expand(a_id, pct, depth) AS (
-        SELECT cs.artist_id, cs.share_pct::NUMERIC, 0
+CREATE OR REPLACE FUNCTION resolve_contract_split(p_contract_id INT)
+RETURNS TABLE (artist_id INT, effective_pct NUMERIC, path TEXT)
+LANGUAGE sql STABLE AS $$
+    WITH RECURSIVE expand(a_id, pct, path, depth) AS (
+        SELECT cs.artist_id, cs.share_pct::NUMERIC,
+               a.name || ' ' || trim_scale(cs.share_pct) || '%', 0
         FROM   contract_split cs
+        JOIN   artist a ON a.artist_id = cs.artist_id
         WHERE  cs.contract_id = p_contract_id
       UNION ALL
-        SELECT gm.member_id, e.pct * gm.share_pct / 100, e.depth + 1
+        SELECT gm.member_id, e.pct * gm.share_pct / 100,
+               e.path || ' > ' || m.name || ' ' || trim_scale(gm.share_pct) || '%', e.depth + 1
         FROM   expand e
-        JOIN   artist a       ON a.artist_id = e.a_id AND a.kind = 'group'
         JOIN   group_member gm ON gm.group_id = e.a_id
-        WHERE  e.depth < 8
-    ),
-    leaf AS (
-        SELECT e.a_id, SUM(e.pct) AS pct
-        FROM   expand e
-        JOIN   artist a ON a.artist_id = e.a_id AND a.kind = 'solo'
-        GROUP  BY e.a_id
-    ),
-    total AS (SELECT SUM(pct) AS s FROM leaf)
-    SELECT l.a_id, l.pct
-    FROM   leaf l, total t
-    WHERE  abs(t.s - 100) < 0.0001;
+        JOIN   artist m        ON m.artist_id = gm.member_id
+        WHERE  e.depth < 16                       -- cycles are blocked by a trigger; this is a safety net
+    )
+    SELECT e.a_id, e.pct, e.path
+    FROM   expand e
+    JOIN   artist a ON a.artist_id = e.a_id AND a.kind = 'solo'
+    ORDER  BY e.pct DESC, e.path;
+$$;
+
+-- The effective split of a track under its ACTIVE contract. Raises if there is
+-- no active contract or the leaves do not add up to 100 (e.g. an empty group).
+CREATE OR REPLACE FUNCTION resolve_split(p_track_id INT)
+RETURNS TABLE (artist_id INT, effective_pct NUMERIC, path TEXT)
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+    v_contract INT;
+    v_total    NUMERIC;
+BEGIN
+    SELECT c.contract_id INTO v_contract
+    FROM   contract c WHERE c.track_id = p_track_id AND c.status = 'active';
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Track % has no active contract', p_track_id;
+    END IF;
+
+    SELECT COALESCE(SUM(r.effective_pct), 0) INTO v_total FROM resolve_contract_split(v_contract) r;
+    IF abs(v_total - 100) > 0.0001 THEN
+        RAISE EXCEPTION 'Split of track % resolves to % percent, not 100 (does every group have members?)',
+                        p_track_id, round(v_total, 4);
+    END IF;
+
+    RETURN QUERY SELECT r.artist_id, r.effective_pct, r.path FROM resolve_contract_split(v_contract) r;
 END $$;
 
 -- ---------------------------------------------------------------------
--- Generic audit trigger: TG_ARGV lists the primary-key column(s).
--- The acting user comes from the session setting app.user_id (set by the app
--- with SET LOCAL), falling back to the database role.
+-- Generic audit trigger. TG_ARGV lists the primary-key column(s).
+-- actor = e-mail of app.user_id (set by the app per transaction), else the DB role.
+-- SECURITY DEFINER so the insert works whatever app role is active.
 -- ---------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fn_audit() RETURNS TRIGGER
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE
-    v_row jsonb;
-    v_pk  TEXT := '';
-    v_col TEXT;
+    v_row   jsonb := to_jsonb(CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END);
+    v_pk    TEXT  := '';
+    v_col   TEXT;
+    v_actor TEXT;
 BEGIN
-    v_row := to_jsonb(CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END);
     FOREACH v_col IN ARRAY TG_ARGV LOOP
         v_pk := v_pk || CASE WHEN v_pk = '' THEN '' ELSE '/' END || COALESCE(v_row ->> v_col, '');
     END LOOP;
-    INSERT INTO audit_log (table_name, row_pk, action, old_data, new_data, changed_by)
-    VALUES (TG_TABLE_NAME, v_pk, TG_OP,
+
+    SELECT u.email INTO v_actor
+    FROM   app_user u
+    WHERE  u.user_id::TEXT = NULLIF(current_setting('app.user_id', true), '');
+
+    INSERT INTO audit_log (table_name, op, row_pk, before, after, actor)
+    VALUES (TG_TABLE_NAME, TG_OP, v_pk,
             CASE WHEN TG_OP <> 'INSERT' THEN to_jsonb(OLD) END,
             CASE WHEN TG_OP <> 'DELETE' THEN to_jsonb(NEW) END,
-            COALESCE(NULLIF(current_setting('app.user_id', true), ''), current_user));
+            COALESCE(v_actor, current_user));
     RETURN NULL;
 END $$;
 
-CREATE TRIGGER trg_audit_track          AFTER INSERT OR UPDATE OR DELETE ON track          FOR EACH ROW EXECUTE FUNCTION fn_audit('track_id');
 CREATE TRIGGER trg_audit_contract       AFTER INSERT OR UPDATE OR DELETE ON contract       FOR EACH ROW EXECUTE FUNCTION fn_audit('contract_id');
 CREATE TRIGGER trg_audit_contract_split AFTER INSERT OR UPDATE OR DELETE ON contract_split FOR EACH ROW EXECUTE FUNCTION fn_audit('contract_id', 'artist_id');
 CREATE TRIGGER trg_audit_group_member   AFTER INSERT OR UPDATE OR DELETE ON group_member   FOR EACH ROW EXECUTE FUNCTION fn_audit('group_id', 'member_id');
@@ -68,109 +92,19 @@ CREATE TRIGGER trg_audit_payout_period  AFTER INSERT OR UPDATE OR DELETE ON payo
 CREATE TRIGGER trg_audit_payout         AFTER INSERT OR UPDATE OR DELETE ON payout         FOR EACH ROW EXECUTE FUNCTION fn_audit('payout_id');
 
 -- ---------------------------------------------------------------------
--- Contracts: a contract can only become active if its shares total exactly
--- 100%, and only a draft can be activated. Superseded contracts are final.
--- ---------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION fn_contract_status_guard() RETURNS TRIGGER
-LANGUAGE plpgsql AS $$
-DECLARE v_total NUMERIC;
-BEGIN
-    IF OLD.status = 'superseded' THEN
-        RAISE EXCEPTION 'Contract % is superseded and cannot be changed', OLD.contract_id;
-    END IF;
-    IF NEW.status = 'draft' AND OLD.status <> 'draft' THEN
-        RAISE EXCEPTION 'Contract % cannot return to draft', OLD.contract_id;
-    END IF;
-    IF NEW.status = 'active' AND OLD.status = 'draft' THEN
-        SELECT COALESCE(SUM(share_pct), 0) INTO v_total
-        FROM contract_split WHERE contract_id = NEW.contract_id;
-        IF v_total <> 100 THEN
-            RAISE EXCEPTION 'Splits for contract % total % percent, must be exactly 100', NEW.contract_id, v_total;
-        END IF;
-    END IF;
-    IF OLD.status <> 'draft' AND (NEW.track_id <> OLD.track_id OR NEW.version <> OLD.version) THEN
-        RAISE EXCEPTION 'Track and version of a non-draft contract are immutable';
-    END IF;
-    RETURN NEW;
-END $$;
-
-CREATE TRIGGER trg_contract_status_guard
-    BEFORE UPDATE ON contract FOR EACH ROW EXECUTE FUNCTION fn_contract_status_guard();
-
-CREATE OR REPLACE FUNCTION fn_contract_delete_guard() RETURNS TRIGGER
-LANGUAGE plpgsql AS $$
-BEGIN
-    IF OLD.status <> 'draft' THEN
-        RAISE EXCEPTION 'Only draft contracts can be deleted (contract % is %)', OLD.contract_id, OLD.status;
-    END IF;
-    RETURN OLD;
-END $$;
-
-CREATE TRIGGER trg_contract_delete_guard
-    BEFORE DELETE ON contract FOR EACH ROW EXECUTE FUNCTION fn_contract_delete_guard();
-
--- Shares can only be edited while the contract is still a draft.
-CREATE OR REPLACE FUNCTION fn_contract_split_frozen() RETURNS TRIGGER
-LANGUAGE plpgsql AS $$
-DECLARE v_status contract_status;
-BEGIN
-    IF TG_OP IN ('UPDATE', 'DELETE') THEN
-        SELECT status INTO v_status FROM contract WHERE contract_id = OLD.contract_id;
-        IF v_status IS NOT NULL AND v_status <> 'draft' THEN
-            RAISE EXCEPTION 'Splits of % contract % are frozen', v_status, OLD.contract_id;
-        END IF;
-    END IF;
-    IF TG_OP IN ('INSERT', 'UPDATE') THEN
-        SELECT status INTO v_status FROM contract WHERE contract_id = NEW.contract_id;
-        IF v_status IS NOT NULL AND v_status <> 'draft' THEN
-            RAISE EXCEPTION 'Splits of % contract % are frozen', v_status, NEW.contract_id;
-        END IF;
-    END IF;
-    RETURN COALESCE(NEW, OLD);
-END $$;
-
-CREATE TRIGGER trg_contract_split_frozen
-    BEFORE INSERT OR UPDATE OR DELETE ON contract_split
-    FOR EACH ROW EXECUTE FUNCTION fn_contract_split_frozen();
-
--- Create the next draft version for a track.
-CREATE OR REPLACE FUNCTION create_contract_draft(p_track_id INT, p_created_by INT DEFAULT NULL)
-RETURNS INT LANGUAGE plpgsql AS $$
-DECLARE v_id INT;
-BEGIN
-    INSERT INTO contract (track_id, version, created_by)
-    SELECT p_track_id, COALESCE(MAX(version), 0) + 1, p_created_by
-    FROM contract WHERE track_id = p_track_id
-    RETURNING contract_id INTO v_id;
-    RETURN v_id;
-END $$;
-
--- Activate a draft: supersedes the current active contract in the same
--- transaction. If the shares do not total 100%, everything rolls back.
-CREATE OR REPLACE FUNCTION activate_contract(p_contract_id INT)
-RETURNS VOID LANGUAGE plpgsql AS $$
-DECLARE v_track INT;
-BEGIN
-    SELECT track_id INTO v_track FROM contract WHERE contract_id = p_contract_id FOR UPDATE;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'Contract % does not exist', p_contract_id;
-    END IF;
-    UPDATE contract SET status = 'superseded'
-    WHERE track_id = v_track AND status = 'active';
-    UPDATE contract SET status = 'active', activated_at = now()
-    WHERE contract_id = p_contract_id;
-END $$;
-
--- ---------------------------------------------------------------------
--- Groups: member shares must total 100% (checked at commit, so rows can be
--- inserted one at a time inside a transaction); membership may not form a cycle.
+-- Groups: members must belong to a group artist, may not form a cycle, and
+-- their shares must total exactly 100 (checked at COMMIT, so a whole set
+-- can be replaced row by row inside one transaction).
 -- ---------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fn_group_member_guard() RETURNS TRIGGER
 LANGUAGE plpgsql AS $$
+DECLARE v_group_name TEXT;
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM artist WHERE artist_id = NEW.group_id AND kind = 'group') THEN
-        RAISE EXCEPTION 'Artist % is not a group', NEW.group_id;
+    SELECT name INTO v_group_name FROM artist WHERE artist_id = NEW.group_id AND kind = 'group';
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Artist % is not a group, so it cannot have members', NEW.group_id;
     END IF;
+    -- walk down from the new member; reaching the group again means a cycle
     IF EXISTS (
         WITH RECURSIVE down(a_id) AS (
             SELECT NEW.member_id
@@ -179,7 +113,7 @@ BEGIN
         )
         SELECT 1 FROM down WHERE a_id = NEW.group_id
     ) THEN
-        RAISE EXCEPTION 'Adding % to group % would create a membership cycle', NEW.member_id, NEW.group_id;
+        RAISE EXCEPTION 'Adding artist % to group "%" would create a membership cycle', NEW.member_id, v_group_name;
     END IF;
     RETURN NEW;
 END $$;
@@ -201,9 +135,10 @@ BEGIN
         ) x(g) WHERE g IS NOT NULL
     LOOP
         SELECT COALESCE(SUM(share_pct), 0), COUNT(*) INTO v_sum, v_cnt
-        FROM group_member WHERE group_id = v_group;
+        FROM   group_member WHERE group_id = v_group;
+        -- a group with no members left is allowed (e.g. while being deleted)
         IF v_cnt > 0 AND v_sum <> 100 THEN
-            RAISE EXCEPTION 'Member shares of group % total % percent, must be exactly 100', v_group, v_sum;
+            RAISE EXCEPTION 'Member shares of group % total % percent, must be exactly 100', v_group, trim_scale(v_sum);
         END IF;
     END LOOP;
     RETURN NULL;
@@ -215,28 +150,151 @@ CREATE CONSTRAINT TRIGGER trg_group_member_sum
     FOR EACH ROW EXECUTE FUNCTION fn_group_member_sum();
 
 -- ---------------------------------------------------------------------
--- Period / usage / ledger / payout integrity
+-- Contracts: only drafts change. Activation needs exactly 100%.
+-- Superseded contracts are final; drafts are the only ones that can be deleted.
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fn_contract_guard() RETURNS TRIGGER
+LANGUAGE plpgsql AS $$
+DECLARE v_total NUMERIC;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF OLD.status <> 'draft' THEN
+            RAISE EXCEPTION 'Only draft contracts can be deleted (contract % is %)', OLD.contract_id, OLD.status;
+        END IF;
+        RETURN OLD;
+    END IF;
+
+    IF NEW.track_id <> OLD.track_id OR NEW.version <> OLD.version THEN
+        RAISE EXCEPTION 'Track and version of a contract cannot be changed';
+    END IF;
+    IF OLD.status = 'superseded' THEN
+        RAISE EXCEPTION 'Contract % is superseded and cannot be changed', OLD.contract_id;
+    END IF;
+    IF OLD.status = 'active' AND NEW.status NOT IN ('active', 'superseded') THEN
+        RAISE EXCEPTION 'An active contract can only be superseded';
+    END IF;
+    IF OLD.status = 'draft' AND NEW.status = 'superseded' THEN
+        RAISE EXCEPTION 'A draft contract cannot be superseded; delete it instead';
+    END IF;
+    IF OLD.status = 'draft' AND NEW.status = 'active' THEN
+        SELECT COALESCE(SUM(share_pct), 0) INTO v_total FROM contract_split WHERE contract_id = NEW.contract_id;
+        IF v_total <> 100 THEN
+            RAISE EXCEPTION 'Splits of contract % total % percent, must be exactly 100', NEW.contract_id, trim_scale(v_total);
+        END IF;
+    END IF;
+    RETURN NEW;
+END $$;
+
+CREATE TRIGGER trg_contract_guard
+    BEFORE UPDATE OR DELETE ON contract FOR EACH ROW EXECUTE FUNCTION fn_contract_guard();
+
+-- Splits are editable only while their contract is a draft.
+CREATE OR REPLACE FUNCTION fn_contract_split_draft_only() RETURNS TRIGGER
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_contract INT;
+    v_status   TEXT;
+BEGIN
+    FOREACH v_contract IN ARRAY ARRAY[
+        CASE WHEN TG_OP <> 'INSERT' THEN OLD.contract_id END,
+        CASE WHEN TG_OP <> 'DELETE' THEN NEW.contract_id END]
+    LOOP
+        CONTINUE WHEN v_contract IS NULL;
+        SELECT status INTO v_status FROM contract WHERE contract_id = v_contract;
+        -- v_status is NULL when the contract row itself is being deleted (cascade from a draft)
+        IF v_status IS NOT NULL AND v_status <> 'draft' THEN
+            RAISE EXCEPTION 'Contract % is %; splits can only be edited on a draft', v_contract, v_status;
+        END IF;
+    END LOOP;
+    RETURN COALESCE(NEW, OLD);
+END $$;
+
+CREATE TRIGGER trg_contract_split_draft_only
+    BEFORE INSERT OR UPDATE OR DELETE ON contract_split
+    FOR EACH ROW EXECUTE FUNCTION fn_contract_split_draft_only();
+
+-- New draft = next version, pre-filled with the current active splits.
+CREATE OR REPLACE FUNCTION create_contract_draft(p_track_id INT)
+RETURNS INT LANGUAGE plpgsql AS $$
+DECLARE
+    v_id     INT;
+    v_active INT;
+    v_draft  INT;
+BEGIN
+    PERFORM 1 FROM track WHERE track_id = p_track_id FOR UPDATE;   -- serialise drafts per track
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Track % does not exist', p_track_id;
+    END IF;
+    SELECT version INTO v_draft FROM contract WHERE track_id = p_track_id AND status = 'draft';
+    IF FOUND THEN
+        RAISE EXCEPTION 'Track % already has a draft contract (version %)', p_track_id, v_draft;
+    END IF;
+
+    INSERT INTO contract (track_id, version)
+    SELECT p_track_id, COALESCE(MAX(version), 0) + 1 FROM contract WHERE track_id = p_track_id
+    RETURNING contract_id INTO v_id;
+
+    SELECT contract_id INTO v_active FROM contract WHERE track_id = p_track_id AND status = 'active';
+    INSERT INTO contract_split (contract_id, artist_id, share_pct)
+    SELECT v_id, artist_id, share_pct FROM contract_split WHERE contract_id = v_active;
+    RETURN v_id;
+END $$;
+
+-- Activate a draft and supersede the old active contract, in one transaction.
+CREATE OR REPLACE FUNCTION activate_contract(p_contract_id INT)
+RETURNS VOID LANGUAGE plpgsql AS $$
+DECLARE
+    v_track  INT;
+    v_status TEXT;
+    v_total  NUMERIC;
+BEGIN
+    SELECT track_id, status INTO v_track, v_status FROM contract WHERE contract_id = p_contract_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Contract % does not exist', p_contract_id;
+    END IF;
+    IF v_status <> 'draft' THEN
+        RAISE EXCEPTION 'Contract % is %; only a draft can be activated', p_contract_id, v_status;
+    END IF;
+    SELECT COALESCE(SUM(share_pct), 0) INTO v_total FROM contract_split WHERE contract_id = p_contract_id;
+    IF v_total <> 100 THEN
+        RAISE EXCEPTION 'Splits of contract % total % percent, must be exactly 100', p_contract_id, trim_scale(v_total);
+    END IF;
+
+    UPDATE contract SET status = 'superseded' WHERE track_id = v_track AND status = 'active';
+    UPDATE contract SET status = 'active', activated_at = now() WHERE contract_id = p_contract_id;
+END $$;
+
+-- ---------------------------------------------------------------------
+-- Periods, usage, ledger, payouts: history is never rewritten.
 -- ---------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fn_period_guard() RETURNS TRIGGER
 LANGUAGE plpgsql AS $$
 BEGIN
     IF OLD.status = 'closed' THEN
-        RAISE EXCEPTION 'Period % is closed and cannot be changed', OLD.period_id;
+        RAISE EXCEPTION 'Period % is closed and cannot be changed', OLD.label;
     END IF;
-    RETURN NEW;
+    RETURN COALESCE(NEW, OLD);
 END $$;
 
 CREATE TRIGGER trg_period_guard
-    BEFORE UPDATE ON payout_period FOR EACH ROW EXECUTE FUNCTION fn_period_guard();
+    BEFORE UPDATE OR DELETE ON payout_period FOR EACH ROW EXECUTE FUNCTION fn_period_guard();
 
 CREATE OR REPLACE FUNCTION fn_usage_period_open() RETURNS TRIGGER
 LANGUAGE plpgsql AS $$
-DECLARE v_status period_status;
+DECLARE
+    v_status TEXT;
+    v_label  TEXT;
 BEGIN
-    SELECT status INTO v_status FROM payout_period
-    WHERE period_id = COALESCE(NEW.period_id, OLD.period_id);
+    SELECT status, label INTO v_status, v_label FROM payout_period
+    WHERE  period_id = CASE WHEN TG_OP = 'DELETE' THEN OLD.period_id ELSE NEW.period_id END;
     IF v_status = 'closed' THEN
-        RAISE EXCEPTION 'Usage of a closed period cannot be modified';
+        RAISE EXCEPTION 'Usage of closed period % cannot be changed', v_label;
+    END IF;
+    IF TG_OP = 'UPDATE' AND OLD.period_id <> NEW.period_id THEN
+        SELECT status, label INTO v_status, v_label FROM payout_period WHERE period_id = OLD.period_id;
+        IF v_status = 'closed' THEN
+            RAISE EXCEPTION 'Usage of closed period % cannot be changed', v_label;
+        END IF;
     END IF;
     RETURN COALESCE(NEW, OLD);
 END $$;
@@ -245,28 +303,27 @@ CREATE TRIGGER trg_usage_period_open
     BEFORE INSERT OR UPDATE OR DELETE ON usage_summary
     FOR EACH ROW EXECUTE FUNCTION fn_usage_period_open();
 
-CREATE OR REPLACE FUNCTION fn_ledger_immutable() RETURNS TRIGGER
+CREATE OR REPLACE FUNCTION fn_ledger_append_only() RETURNS TRIGGER
 LANGUAGE plpgsql AS $$
 BEGIN
-    RAISE EXCEPTION 'ledger_entry is append-only (% rejected)', TG_OP;
+    RAISE EXCEPTION 'ledger_entry is append-only: % is not allowed', TG_OP;
 END $$;
 
-CREATE TRIGGER trg_ledger_immutable
-    BEFORE UPDATE OR DELETE ON ledger_entry FOR EACH ROW EXECUTE FUNCTION fn_ledger_immutable();
+CREATE TRIGGER trg_ledger_append_only
+    BEFORE UPDATE OR DELETE ON ledger_entry FOR EACH ROW EXECUTE FUNCTION fn_ledger_append_only();
 
--- Only status / paid_at of a payout may change; amounts are frozen.
+-- Payouts are never deleted; only pending -> paid may change.
 CREATE OR REPLACE FUNCTION fn_payout_guard() RETURNS TRIGGER
 LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_OP = 'DELETE' THEN
         RAISE EXCEPTION 'Payouts cannot be deleted';
     END IF;
-    IF NEW.period_id <> OLD.period_id OR NEW.artist_id <> OLD.artist_id
-       OR NEW.total_amount <> OLD.total_amount THEN
-        RAISE EXCEPTION 'Only the status of a payout can change';
-    END IF;
     IF OLD.status = 'paid' THEN
         RAISE EXCEPTION 'Payout % is already paid', OLD.payout_id;
+    END IF;
+    IF NEW.period_id <> OLD.period_id OR NEW.artist_id <> OLD.artist_id OR NEW.amount <> OLD.amount THEN
+        RAISE EXCEPTION 'Only the status of a payout can change';
     END IF;
     RETURN NEW;
 END $$;
@@ -274,11 +331,10 @@ END $$;
 CREATE TRIGGER trg_payout_guard
     BEFORE UPDATE OR DELETE ON payout FOR EACH ROW EXECUTE FUNCTION fn_payout_guard();
 
--- Mark a payout paid. The row lock makes concurrent attempts safe:
--- the second caller waits, then sees status = 'paid' and is rejected.
+-- Pay once. FOR UPDATE makes a concurrent second call wait, then see 'paid' and fail.
 CREATE OR REPLACE FUNCTION mark_payout_paid(p_payout_id INT)
 RETURNS VOID LANGUAGE plpgsql AS $$
-DECLARE v_status payout_status;
+DECLARE v_status TEXT;
 BEGIN
     SELECT status INTO v_status FROM payout WHERE payout_id = p_payout_id FOR UPDATE;
     IF NOT FOUND THEN
@@ -291,125 +347,121 @@ BEGIN
 END $$;
 
 -- ---------------------------------------------------------------------
--- Stored procedure: close a payout period.
---   usage_summary x platform rate x resolved splits  ->  ledger_entry
---   ledger_entry grouped by artist                   ->  payout
--- Runs as one transaction under a lock on the period row; any failure
--- (no contract, split not totalling 100%, already closed) rolls it all back.
+-- Stored procedure: close a payout period (one transaction).
+--   usage_summary x platform rate x resolved split -> ledger_entry
+--   ledger_entry summed per artist                  -> payout
+-- Any error (already closed, no usage, missing contract, bad split) rolls everything back.
 -- ---------------------------------------------------------------------
-CREATE OR REPLACE PROCEDURE close_payout_period(p_period_id INT, p_closed_by INT DEFAULT NULL)
+CREATE OR REPLACE PROCEDURE close_payout_period(p_period_id INT)
 LANGUAGE plpgsql AS $$
 DECLARE
-    v_status   period_status;
-    v_missing  INT;
-    v_expected INT;
-    v_got      INT;
+    v_status  TEXT;
+    v_label   TEXT;
+    v_missing TEXT;
 BEGIN
-    SELECT status INTO v_status FROM payout_period WHERE period_id = p_period_id FOR UPDATE;
+    SELECT status, label INTO v_status, v_label FROM payout_period WHERE period_id = p_period_id FOR UPDATE;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Period % does not exist', p_period_id;
     END IF;
     IF v_status <> 'open' THEN
-        RAISE EXCEPTION 'Period % is already closed', p_period_id;
+        RAISE EXCEPTION 'Period % is already closed', v_label;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM usage_summary WHERE period_id = p_period_id) THEN
-        RAISE EXCEPTION 'Period % has no usage loaded', p_period_id;
+        RAISE EXCEPTION 'Period % has no usage loaded; aggregate usage first', v_label;
     END IF;
 
-    SELECT COUNT(DISTINCT us.track_id) INTO v_missing
-    FROM usage_summary us
-    WHERE us.period_id = p_period_id
-      AND NOT EXISTS (SELECT 1 FROM contract c WHERE c.track_id = us.track_id AND c.status = 'active');
-    IF v_missing > 0 THEN
-        RAISE EXCEPTION '% track(s) have usage but no active contract', v_missing;
+    SELECT string_agg(DISTINCT t.title, ', ') INTO v_missing
+    FROM   usage_summary us JOIN track t ON t.track_id = us.track_id
+    WHERE  us.period_id = p_period_id
+      AND  NOT EXISTS (SELECT 1 FROM contract c WHERE c.track_id = us.track_id AND c.status = 'active');
+    IF v_missing IS NOT NULL THEN
+        RAISE EXCEPTION 'Cannot close period %: no active contract for %', v_label, v_missing;
     END IF;
 
-    INSERT INTO ledger_entry
-           (period_id, track_id, contract_id, platform_id, artist_id,
-            plays, rate_per_play, effective_pct, amount)
-    SELECT us.period_id, us.track_id, c.contract_id, us.platform_id, rs.artist_id,
-           us.plays, pl.rate_per_play,
-           ROUND(rs.effective_pct, 6),
-           ROUND(us.plays * pl.rate_per_play * rs.effective_pct / 100, 4)
+    INSERT INTO ledger_entry (period_id, track_id, contract_id, artist_id, platform_code,
+                              plays, effective_pct, amount, share_path)
+    SELECT us.period_id, us.track_id, c.contract_id, rs.artist_id, us.platform_code,
+           us.plays, round(rs.effective_pct, 6),
+           round(us.plays * pl.rate_per_play * rs.effective_pct / 100, 4),
+           rs.path
     FROM   usage_summary us
-    JOIN   platform pl ON pl.platform_id = us.platform_id
+    JOIN   platform pl ON pl.code = us.platform_code
     JOIN   contract c  ON c.track_id = us.track_id AND c.status = 'active'
-    CROSS  JOIN LATERAL resolve_split(c.contract_id) rs
+    CROSS  JOIN LATERAL resolve_split(us.track_id) rs
     WHERE  us.period_id = p_period_id;
 
-    SELECT COUNT(DISTINCT track_id) INTO v_expected FROM usage_summary WHERE period_id = p_period_id;
-    SELECT COUNT(DISTINCT track_id) INTO v_got      FROM ledger_entry  WHERE period_id = p_period_id;
-    IF v_got <> v_expected THEN
-        RAISE EXCEPTION 'A contract''s splits do not resolve to 100 percent for % of % track(s)',
-                        v_expected - v_got, v_expected;
-    END IF;
-
-    INSERT INTO payout (period_id, artist_id, total_amount)
-    SELECT period_id, artist_id, SUM(amount)
+    INSERT INTO payout (period_id, artist_id, amount)
+    SELECT period_id, artist_id, round(SUM(amount), 2)
     FROM   ledger_entry
     WHERE  period_id = p_period_id
     GROUP  BY period_id, artist_id;
 
-    UPDATE payout_period
-    SET    status = 'closed', closed_at = now(), closed_by = p_closed_by
-    WHERE  period_id = p_period_id;
+    UPDATE payout_period SET status = 'closed', closed_at = now() WHERE period_id = p_period_id;
 END $$;
 
 -- ---------------------------------------------------------------------
--- Views
+-- Full-text catalogue search (prefix match on every word, ranked).
 -- ---------------------------------------------------------------------
--- Who actually gets what share of each track under its active contract.
-CREATE OR REPLACE VIEW v_active_split AS
-SELECT c.track_id, t.title, c.contract_id, rs.artist_id, a.stage_name,
-       ROUND(rs.effective_pct, 4) AS effective_pct
+CREATE OR REPLACE FUNCTION search_catalog(p_query TEXT)
+RETURNS TABLE (kind TEXT, id INT, label TEXT, rank REAL)
+LANGUAGE plpgsql STABLE AS $$
+DECLARE v_tsq tsquery;
+BEGIN
+    -- 'night ow' -> 'night:* & ow:*'  (punctuation stripped, so user input cannot break the query)
+    SELECT to_tsquery('simple', string_agg(w || ':*', ' & ')) INTO v_tsq
+    FROM   regexp_split_to_table(trim(regexp_replace(lower(COALESCE(p_query, '')), '[^[:alnum:]]+', ' ', 'g')), ' ') w
+    WHERE  w <> '';
+    IF v_tsq IS NULL THEN
+        RETURN;
+    END IF;
+
+    RETURN QUERY
+    SELECT * FROM (
+        SELECT 'track'::TEXT, t.track_id, t.title::TEXT, ts_rank(t.search_vector, v_tsq)
+        FROM   track t WHERE t.search_vector @@ v_tsq
+        UNION ALL
+        SELECT 'artist'::TEXT, a.artist_id, a.name::TEXT, ts_rank(a.search_vector, v_tsq)
+        FROM   artist a WHERE a.search_vector @@ v_tsq
+    ) r(kind, id, label, rank)
+    ORDER  BY r.rank DESC, r.label;
+END $$;
+
+-- ---------------------------------------------------------------------
+-- Views. security_invoker = true makes RLS on the base tables apply to whoever
+-- queries the view (an artist sees only their own statement lines).
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE VIEW v_active_split WITH (security_invoker = true) AS
+SELECT c.track_id, t.title, c.contract_id, c.version,
+       rs.artist_id, a.name AS artist_name, round(rs.effective_pct, 4) AS effective_pct, rs.path AS share_path
 FROM   contract c
 JOIN   track t ON t.track_id = c.track_id
-CROSS  JOIN LATERAL resolve_split(c.contract_id) rs
+CROSS  JOIN LATERAL resolve_contract_split(c.contract_id) rs
 JOIN   artist a ON a.artist_id = rs.artist_id
 WHERE  c.status = 'active';
 
-CREATE OR REPLACE VIEW v_contract_overview AS
-SELECT t.track_id, t.title, c.contract_id, c.version, c.status,
+CREATE OR REPLACE VIEW v_contract_overview WITH (security_invoker = true) AS
+SELECT t.track_id, t.title, c.contract_id, c.version, c.status, c.activated_at, c.created_at,
        COALESCE(SUM(cs.share_pct), 0) AS total_share_pct,
        COUNT(cs.artist_id)            AS payee_count
 FROM   contract c
 JOIN   track t ON t.track_id = c.track_id
 LEFT   JOIN contract_split cs ON cs.contract_id = c.contract_id
-GROUP  BY t.track_id, t.title, c.contract_id, c.version, c.status;
+GROUP  BY t.track_id, t.title, c.contract_id, c.version, c.status, c.activated_at, c.created_at;
 
--- Earnings statement lines. security_invoker makes row-level security on
--- ledger_entry apply to whoever queries the view (an artist sees only their rows).
 CREATE OR REPLACE VIEW v_artist_statement WITH (security_invoker = true) AS
-SELECT le.artist_id, le.period_id, pp.period_start, pp.period_end,
-       t.track_id, t.title, p.code AS platform, le.plays,
-       le.rate_per_play, le.effective_pct, le.amount
+SELECT le.artist_id, a.name AS artist_name, le.period_id, pp.label AS period_label,
+       le.track_id, t.title, le.platform_code, le.plays, le.effective_pct, le.amount, le.share_path
 FROM   ledger_entry le
+JOIN   artist a         ON a.artist_id  = le.artist_id
 JOIN   payout_period pp ON pp.period_id = le.period_id
-JOIN   track t          ON t.track_id   = le.track_id
-JOIN   platform p       ON p.platform_id = le.platform_id;
+JOIN   track t          ON t.track_id   = le.track_id;
 
-CREATE OR REPLACE VIEW v_period_summary AS
-SELECT pp.period_id, pp.period_start, pp.period_end, pp.status,
-       COUNT(DISTINCT us.track_id)  AS tracks_with_usage,
-       COALESCE(SUM(us.plays), 0)   AS total_plays,
-       (SELECT COALESCE(SUM(po.total_amount), 0) FROM payout po
-         WHERE po.period_id = pp.period_id) AS total_payable
-FROM   payout_period pp
-LEFT   JOIN usage_summary us ON us.period_id = pp.period_id
-GROUP  BY pp.period_id, pp.period_start, pp.period_end, pp.status;
-
--- Full-text catalogue search.
-CREATE OR REPLACE FUNCTION search_catalog(p_query TEXT)
-RETURNS TABLE (kind TEXT, id INT, label TEXT, rank REAL)
-LANGUAGE sql STABLE AS $$
-    SELECT 'track', t.track_id, t.title,
-           ts_rank(to_tsvector('simple', t.title), websearch_to_tsquery('simple', p_query))
-    FROM   track t
-    WHERE  to_tsvector('simple', t.title) @@ websearch_to_tsquery('simple', p_query)
-    UNION ALL
-    SELECT 'artist', a.artist_id, a.stage_name,
-           ts_rank(to_tsvector('simple', a.stage_name), websearch_to_tsquery('simple', p_query))
-    FROM   artist a
-    WHERE  to_tsvector('simple', a.stage_name) @@ websearch_to_tsquery('simple', p_query)
-    ORDER  BY 4 DESC;
-$$;
+CREATE OR REPLACE VIEW v_period_totals WITH (security_invoker = true) AS
+SELECT pp.period_id, pp.label, pp.starts_on, pp.ends_on, pp.status, pp.closed_at,
+       (SELECT COUNT(DISTINCT us.track_id) FROM usage_summary us WHERE us.period_id = pp.period_id) AS tracks_with_usage,
+       (SELECT COALESCE(SUM(us.plays), 0)  FROM usage_summary us WHERE us.period_id = pp.period_id) AS total_plays,
+       (SELECT COALESCE(SUM(le.amount), 0) FROM ledger_entry le  WHERE le.period_id = pp.period_id) AS ledger_total,
+       (SELECT COALESCE(SUM(po.amount), 0) FROM payout po        WHERE po.period_id = pp.period_id) AS payout_total,
+       (SELECT COUNT(*) FROM payout po WHERE po.period_id = pp.period_id AND po.status = 'paid')     AS payouts_paid,
+       (SELECT COUNT(*) FROM payout po WHERE po.period_id = pp.period_id)                           AS payouts_total
+FROM   payout_period pp;

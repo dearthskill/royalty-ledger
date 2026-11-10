@@ -47,3 +47,11 @@ Files: `lib/contracts.ts`, `app/api/tracks/[id]/{contracts,effective-split,histo
 * How does the history endpoint still find the splits of a draft that was later deleted? -> `ids` CTE over `audit_log` in the history route
 * Walk through `effective-split` for Midnight Static: where do 35 / 30 / 21 / 14 come from? -> `resolve_contract_split`, test "resolves nested groups"
 * Live modification to try: return the superseded version's effective split too (call `resolve_contract_split(contract_id)`).
+
+## WP6: Admin UI for catalogue and contracts
+Files: `app/admin/artists/*`, `app/admin/tracks/**`, `components/{ShareEditor,SearchBox,ErrorBox,api}.tsx`, `docs/screenshots/6-*.png`
+* The editor shows "99%" live; why can the user still press Save, and who rejects it? -> `ShareEditor` (no 100% gate), deferred trigger message shown by `ErrorBox`
+* Why does the live total add up cents instead of floats? -> `cents()` in `components/ShareEditor.tsx`
+* After activating a draft, where does the new effective split on screen come from? -> `TrackDetail` reload -> `GET /api/tracks/:id/effective-split` -> `resolve_split`
+* How does the search box reach the database, and what index serves it? -> `SearchBox` -> `/api/search` -> `search_catalog` -> GIN `idx_track_search`
+* Live modification to try: show each artist's effective % next to the draft editor (call `resolve_contract_split` for the draft).

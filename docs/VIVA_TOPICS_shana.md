@@ -71,3 +71,18 @@ Files: `lib/statements.ts`, `app/api/me/statement|payouts/route.ts`, `app/api/au
 
 Live modification to try: add a "Plays" total row to the statement on `/me`, or add an `op` (INSERT/UPDATE/DELETE) filter to
 `AuditQuery` and the filter form.
+
+## WP9: end-to-end scenario and API test sweep
+Files: `tests/api/e2e.test.ts`, `tests/api/sweep.test.ts`
+* Walk through the money flow in the end-to-end test. Where do the numbers 3.60 / 2.40 come from? -> `e2e.test.ts` step 5
+  (1000 x 0.004 + 1000 x 0.002 = 6.00; contract Kai 60 / Lina 40; `close_payout_period`)
+* How do you know every route is tested, including ones added later? -> `routeHandlers()` in `sweep.test.ts` scans `app/api`
+  and compares with the case table
+* The tests never touch the dev databases. How? -> `tests/setup/global-db.ts` (scratch PostgreSQL from `sql/init`, scratch
+  MongoDB from `mongo/init`, both dropped afterwards)
+* Why do the tests create their own periods (2026-10, 2029-01, 2030-01) instead of closing the seeded 2026-09? ->
+  the ledger is append-only (`fn_ledger_append_only`): a closed period cannot be reopened, and other files rely on 2026-09 being open
+* Which test proves that the UI-independent API refuses a forged request to a closed period? -> `e2e.test.ts` step 8
+
+Live modification to try: change Lina's share in the end-to-end contract to 30 (and Kai's to 70) and update the expected
+amounts; or remove a route's entry from the sweep table and watch the guard test fail with the missing route.

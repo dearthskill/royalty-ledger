@@ -86,3 +86,16 @@ Files: `tests/api/e2e.test.ts`, `tests/api/sweep.test.ts`
 
 Live modification to try: change Lina's share in the end-to-end contract to 30 (and Kai's to 70) and update the expected
 amounts; or remove a route's entry from the sweep table and watch the guard test fail with the missing route.
+
+## WP10b: report slice B
+Files: `docs/REPORT.md` sections 9-15, `sql/demo/queries.sql` (Q11 DML, Q12 refusals), `sql/demo/queries_output.txt`,
+`scripts/run_queries.sh`, `mongo/demo/usage_queries.js`, `mongo/demo/usage_queries_output.txt`, `scripts/run_mongo_queries.sh`,
+`mongo/seed/seed_events.js` (optional `dbName`)
+* Explain Q3 line by line: anchor member, recursive member, where it stops, why only solo artists are kept. -> `queries.sql` Q3
+* What makes Q4 *correlated*, and how would you rewrite it with a window function? -> `x.artist_id` inside the subquery; compare Q6
+* Q7 returns no rows. Why is that the result you want? -> reconciliation of ledger vs plays × rate (REPORT section 12)
+* Which MongoDB operations are Read, Update and Delete in the demo, and what did each return? -> `usage_queries_output.txt` R1-R6, U1-U3, D1
+* Where is the boundary between the two databases, and where is it validated in both directions? -> REPORT sections 9.3 and 10.1
+
+Live modification to try: change Q2's `HAVING SUM(le.amount) > 100` to `> 150` and re-run `scripts/run_queries.sh` (Kai and Nova
+remain); or add an R7 to `usage_queries.js` that counts events per `device` with `$group`.

@@ -19,7 +19,7 @@ Owner A = Rohit, B = Shana. Status: `todo` -> `in progress` -> `PR open` -> `mer
 | 8 | Artist and auditor views | B | feat/b-8-artist-auditor-views | #12 | merged | 2026-11-17 |
 | 9 | End-to-end scenario + API test sweep | B | feat/b-9-e2e-and-test-sweep | #13 | merged | 2026-11-17 |
 | 10a | Report slice A (docs/REPORT.md) | A | feat/a-10a-report-slice | #8 | merged | 2026-11-10 |
-| 10b | Report slice B (docs/REPORT.md) | B | | | todo | |
+| 10b | Report slice B (docs/REPORT.md) | B | feat/b-10b-report-slice | #14 | merged | 2026-11-17 |
 | 11 | Final verification, demo script | A | | | todo | |
 
 ## Notes
@@ -40,5 +40,7 @@ Owner A = Rohit, B = Shana. Status: `todo` -> `in progress` -> `PR open` -> `mer
   Import errors now list unknown track ids together with the other row errors.
 * WP9: `tests/api/sweep.test.ts` scans `app/api` and fails when a route handler has no success/failure entry, so every
   new route must be added there. Suite: 137 tests (9 files), also passes with `--sequence.shuffle.files`.
+* WP10b: real query output is generated, not hand-written: `scripts/run_queries.sh` -> `sql/demo/queries_output.txt`,
+  `scripts/run_mongo_queries.sh` -> `mongo/demo/usage_queries_output.txt` (both on scratch databases).
 * WP10a: written ahead of B's work packages (it covers only A's slice, all merged). Sections 9-15 of `docs/REPORT.md` are
   placeholders for WP10b. Re-run `scripts/data_dictionary.sh` into section 5 if the schema changes.

@@ -131,7 +131,7 @@ Either `multipart/form-data` with fields `platform` and `file` (`.csv` or `.json
 ## Aggregate, close, ledger, payouts (WP5, Member B)
 | Method | Path | Role | Request | Response |
 |---|---|---|---|---|
-| POST | /api/periods/:id/aggregate | A | `{ preview?: boolean }` | `{ rows: [{ track_id, title, platform, plays }], total_plays, written: boolean }`; 409 if closed or a batch is disputed; 400 on unknown ids |
+| POST | /api/periods/:id/aggregate | A | `{ preview?: boolean }` | `{ rows: [{ track_id, title, platform, plays }], total_plays, written: boolean }`; 409 if closed, a batch is disputed, or (when writing) there is no valid usage; 400 on unknown ids |
 | POST | /api/periods/:id/close | A | | `{ period, payouts: [payout] }` via `CALL close_payout_period`; 409 with the database message |
 | GET | /api/periods/:id/ledger | A, U | `?artist_id=&track_id=` | `{ entries: [{ entry_id, track_id, title, artist_id, artist_name, platform_code, plays, effective_pct, amount, share_path }] }` |
 | GET | /api/payouts | A, U, R | `?period_id=` | `{ payouts: [payout] }`; an artist gets only their own (RLS) |

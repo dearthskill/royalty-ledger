@@ -13,7 +13,7 @@ Owner A = Rohit, B = Shana. Status: `todo` -> `in progress` -> `PR open` -> `mer
 | 2 | Usage ingestion API (MongoDB R/U/D) | B | feat/b-2-usage-ingestion-api | #9 | merged | 2026-11-17 |
 | 3 | Catalogue API | A | feat/a-3-catalogue-api | #5 | merged | 2026-11-10 |
 | 4 | Contracts API | A | feat/a-4-contracts-api | #6 | merged | 2026-11-10 |
-| 5 | Aggregate, close, ledger, payouts | B | | | todo | |
+| 5 | Aggregate, close, ledger, payouts | B | feat/b-5-aggregate-close-payouts | #10 | merged | 2026-11-17 |
 | 6 | Admin UI: catalogue and contracts | A | feat/a-6-admin-catalogue-ui | #7 | merged | 2026-11-10 |
 | 7 | Admin UI: usage and payouts | B | | | todo | |
 | 8 | Artist and auditor views | B | | | todo | |
@@ -34,5 +34,7 @@ Owner A = Rohit, B = Shana. Status: `todo` -> `in progress` -> `PR open` -> `mer
   the old schema; re-export it from the Mermaid block in `docs/DESIGN.md` (e.g. `npx @mermaid-js/mermaid-cli`).
 * WP2: API tests now also get a scratch MongoDB database per run (`tests/setup/global-db.ts`, needs `mongosh`).
   `mongo/pipelines/usage_ops.d.ts` types the CommonJS pipeline for the TypeScript routes.
+* WP5: API test files share one scratch PostgreSQL database, so tests that count rows scope them to seeded
+  periods (`payouts.test.ts` closes its own periods 2026-10..12; the ledger is append-only and cannot be cleaned up).
 * WP10a: written ahead of B's work packages (it covers only A's slice, all merged). Sections 9-15 of `docs/REPORT.md` are
   placeholders for WP10b. Re-run `scripts/data_dictionary.sh` into section 5 if the schema changes.

@@ -10,7 +10,7 @@ Owner A = Rohit, B = Shana. Status: `todo` -> `in progress` -> `PR open` -> `mer
 | 0 | Database foundation (PostgreSQL) | A | feat/a-0-database-foundation | #2 | merged | 2026-11-10 |
 | 0b | MongoDB foundation + API contract | A | feat/a-0b-mongo-foundation | #3 | merged | 2026-11-10 |
 | 1 | Next.js scaffold + auth | A | feat/a-1-nextjs-auth | #4 | merged | 2026-11-10 |
-| 2 | Usage ingestion API (MongoDB R/U/D) | B | | | todo | |
+| 2 | Usage ingestion API (MongoDB R/U/D) | B | feat/b-2-usage-ingestion-api | #9 | merged | 2026-11-17 |
 | 3 | Catalogue API | A | feat/a-3-catalogue-api | #5 | merged | 2026-11-10 |
 | 4 | Contracts API | A | feat/a-4-contracts-api | #6 | merged | 2026-11-10 |
 | 5 | Aggregate, close, ledger, payouts | B | | | todo | |
@@ -32,5 +32,7 @@ Owner A = Rohit, B = Shana. Status: `todo` -> `in progress` -> `PR open` -> `mer
   `app_user.artist_id`), keeping its trigger logic. Docker host ports are configurable (`POSTGRES_PORT`, `MONGO_PORT`)
   because a local Homebrew PostgreSQL already uses 5432 on Rohit's laptop. **Open item:** `docs/er-diagram.png` still shows
   the old schema; re-export it from the Mermaid block in `docs/DESIGN.md` (e.g. `npx @mermaid-js/mermaid-cli`).
+* WP2: API tests now also get a scratch MongoDB database per run (`tests/setup/global-db.ts`, needs `mongosh`).
+  `mongo/pipelines/usage_ops.d.ts` types the CommonJS pipeline for the TypeScript routes.
 * WP10a: written ahead of B's work packages (it covers only A's slice, all merged). Sections 9-15 of `docs/REPORT.md` are
   placeholders for WP10b. Re-run `scripts/data_dictionary.sh` into section 5 if the schema changes.

@@ -6,14 +6,16 @@ export const PASSWORD = 'Password@123';
 // `never` lets handlers with any params type be passed in (parameters are contravariant).
 type Handler = (req: Request, ctx: { params: Promise<never> }) => Promise<Response>;
 
+// A FormData body is sent as multipart/form-data (fetch sets the boundary); anything else as JSON.
 export function request(path: string, opts: { method?: string; cookie?: string; body?: unknown } = {}) {
   const headers: Record<string, string> = {};
   if (opts.cookie) headers.cookie = opts.cookie;
-  if (opts.body !== undefined) headers['content-type'] = 'application/json';
+  const form = opts.body instanceof FormData;
+  if (opts.body !== undefined && !form) headers['content-type'] = 'application/json';
   return new NextRequest(new URL(path, 'http://localhost'), {
     method: opts.method ?? 'GET',
     headers,
-    body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+    body: opts.body === undefined ? undefined : form ? (opts.body as FormData) : JSON.stringify(opts.body),
   });
 }
 

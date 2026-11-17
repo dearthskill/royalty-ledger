@@ -131,8 +131,9 @@ export async function validateImport(c: PoolClient, period: Period, input: Impor
   const from = new Date(`${period.starts_on}T00:00:00Z`);
   const to = new Date(new Date(`${period.ends_on}T00:00:00Z`).getTime() + 86_400_000);
 
-  const errors: { row: number; message: string }[] = [];
+  const errors = new Map<number, string[]>();   // 1-based data row -> messages
   const clean: CleanRow[] = [];
+  const rowNo: number[] = [];                   // clean[j] came from data row rowNo[j]
   input.rows.forEach((r, i) => {
     const missing = REQUIRED.filter(k => r[k] == null || String(r[k]).trim() === '');
     const known = Object.fromEntries(KNOWN.filter(k => r[k] != null && String(r[k]).trim() !== '').map(k => [k, r[k]]));
@@ -149,22 +150,25 @@ export async function validateImport(c: PoolClient, period: Period, input: Impor
       if (at < from || at >= to) msgs.push(`played_at: ${parsed.data.played_at} is outside period ${period.label}`);
       const extra = Object.fromEntries(Object.entries(r).filter(([k]) => !KNOWN.includes(k)));
       clean.push({ ...parsed.data, played_at: at, ...(Object.keys(extra).length ? { raw: extra } : {}) });
+      rowNo.push(i + 1);
     }
-    if (msgs.length) errors.push({ row: i + 1, message: msgs.join('; ') });
+    if (msgs.length) errors.set(i + 1, msgs);
   });
 
   // Track ids must exist in PostgreSQL (the Mongo -> Postgres boundary is validated on the way in, too).
-  if (!errors.length) {
-    const ids = [...new Set(clean.map(r => r.track_id))];
-    const { rows } = await c.query<{ track_id: number }>('SELECT track_id FROM track WHERE track_id = ANY($1::int[])', [ids]);
-    const known = new Set(rows.map(t => t.track_id));
-    clean.forEach((r, i) => {
-      if (!known.has(r.track_id)) errors.push({ row: i + 1, message: `track_id: track ${r.track_id} does not exist` });
-    });
-  }
+  // Checked for every row that parsed, so one upload reports all of its problems.
+  const ids = [...new Set(clean.map(r => r.track_id))];
+  const { rows } = await c.query<{ track_id: number }>('SELECT track_id FROM track WHERE track_id = ANY($1::int[])', [ids]);
+  const known = new Set(rows.map(t => t.track_id));
+  clean.forEach((r, j) => {
+    if (!known.has(r.track_id)) {
+      errors.set(rowNo[j], [...(errors.get(rowNo[j]) ?? []), `track_id: track ${r.track_id} does not exist`]);
+    }
+  });
 
-  if (errors.length) {
-    throw new HttpError(400, `${errors.length} invalid row${errors.length === 1 ? '' : 's'}`, errors);
+  if (errors.size) {
+    const details = [...errors].sort((a, b) => a[0] - b[0]).map(([row, m]) => ({ row, message: m.join('; ') }));
+    throw new HttpError(400, `${details.length} invalid row${details.length === 1 ? '' : 's'}`, details);
   }
   return clean;
 }

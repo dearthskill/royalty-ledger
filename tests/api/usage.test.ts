@@ -10,6 +10,7 @@ import { POST as voidFlagged } from '@/app/api/periods/[id]/usage/void-flagged/r
 import { DELETE as purge } from '@/app/api/periods/[id]/usage/voided/route';
 import { POST as dispute } from '@/app/api/usage/batches/[batchId]/dispute/route';
 import { POST as resolve } from '@/app/api/usage/batches/[batchId]/resolve/route';
+import { GET as platforms } from '@/app/api/platforms/route';
 import { mongoDb } from '@/lib/mongo';
 import { ops } from '@/lib/usage';
 import { ADMIN, AUDITOR, NOVA, call, cookieFor } from '../helpers';
@@ -75,6 +76,14 @@ describe('periods', () => {
   });
 });
 
+describe('GET /api/platforms', () => {
+  it('lists platforms for any role; 401 without a session', async () => {
+    const r = await call(platforms, '/api/platforms', { cookie: nova });
+    expect(r.body.platforms.map((x: { code: string }) => x.code)).toEqual(['apple_music', 'spotify', 'youtube']);
+    expect((await call(platforms, '/api/platforms')).status).toBe(401);
+  });
+});
+
 describe('POST /api/periods/:id/usage/import', () => {
   it('stores a JSON batch; unknown keys go into raw', async () => {
     const r = await upload(rows3);
@@ -106,13 +115,15 @@ describe('POST /api/periods/:id/usage/import', () => {
       { track_id: 1, plays: 0, listener_hash: 'L9', played_at: '2026-09-03T10:00:00Z' },
       { track_id: 'x', plays: 1, played_at: 'yesterday' },
       ev(2, 'L2', '2026-10-01T00:00:00Z'),
+      ev(999, 'L4', '2026-09-03T10:00:00Z'),
     ]);
     expect(r.status).toBe(400);
-    expect(r.body.error).toBe('3 invalid rows');
+    expect(r.body.error).toBe('4 invalid rows');
     expect(r.body.details).toEqual([
       { row: 2, message: 'plays: must be >= 1' },
       { row: 3, message: expect.stringMatching(/listener_hash: is required.*track_id: must be a whole number.*played_at: must be an ISO timestamp/) },
       { row: 4, message: 'played_at: 2026-10-01T00:00:00Z is outside period 2026-09' },
+      { row: 5, message: 'track_id: track 999 does not exist' },
     ]);
     expect(await (await mongoDb()).collection('usage_batches').countDocuments()).toBe(0);
   });

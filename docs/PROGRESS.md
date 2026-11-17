@@ -16,7 +16,7 @@ Owner A = Rohit, B = Shana. Status: `todo` -> `in progress` -> `PR open` -> `mer
 | 5 | Aggregate, close, ledger, payouts | B | feat/b-5-aggregate-close-payouts | #10 | merged | 2026-11-17 |
 | 6 | Admin UI: catalogue and contracts | A | feat/a-6-admin-catalogue-ui | #7 | merged | 2026-11-10 |
 | 7 | Admin UI: usage and payouts | B | feat/b-7-admin-usage-payouts-ui | #11 | merged | 2026-11-17 |
-| 8 | Artist and auditor views | B | | | todo | |
+| 8 | Artist and auditor views | B | feat/b-8-artist-auditor-views | #12 | merged | 2026-11-17 |
 | 9 | End-to-end scenario + API test sweep | B | | | todo | |
 | 10a | Report slice A (docs/REPORT.md) | A | feat/a-10a-report-slice | #8 | merged | 2026-11-10 |
 | 10b | Report slice B (docs/REPORT.md) | B | | | todo | |

@@ -47,7 +47,7 @@ erDiagram
     artist ||--o{ group_member : "is member of"
     artist ||--o{ track : "primary artist of"
     track ||--o{ contract : "has versions"
-    contract ||--|{ contract_split : "divides into"
+    contract ||--o{ contract_split : "divides into"
     artist ||--o{ contract_split : "receives"
     payout_period ||--o{ usage_summary : "contains"
     track ||--o{ usage_summary : "played"
@@ -64,59 +64,62 @@ erDiagram
         int artist_id PK
         varchar name UK
         text kind "solo | group"
-        varchar email UK
-        tsvector search_vector
+        varchar email UK "nullable"
+        timestamptz created_at
+        tsvector search_vector "generated, GIN"
     }
     app_user {
         int user_id PK
         varchar email UK
-        text password_hash
+        text password_hash "bcrypt"
         text role "admin | artist | auditor"
-        int artist_id FK,UK "iff role = artist"
+        int artist_id FK,UK "set iff role = artist"
+        timestamptz created_at
     }
     group_member {
-        int group_id PK,FK
-        int member_id PK,FK
+        int group_id PK,FK "artist (kind = group)"
+        int member_id PK,FK "artist, not self, no cycles"
         numeric share_pct "0 < x <= 100, sum = 100"
     }
     platform {
-        varchar code PK
+        varchar code PK "= Mongo usage_events.platform"
         varchar name
         numeric rate_per_play "> 0"
     }
     track {
         int track_id PK
         varchar title
-        char isrc UK
+        char isrc UK "ISRC format"
         int primary_artist_id FK
         date released_on
-        tsvector search_vector
+        tsvector search_vector "generated, GIN"
     }
     contract {
         int contract_id PK
-        int track_id FK
-        int version "UK with track_id"
+        int track_id FK "UK with version"
+        int version "> 0"
         text status "draft | active | superseded"
-        timestamptz activated_at
+        timestamptz activated_at "null iff draft"
+        timestamptz created_at
     }
     contract_split {
         int contract_id PK,FK
         int artist_id PK,FK
-        numeric share_pct
+        numeric share_pct "0 < x <= 100, sum = 100 to activate"
     }
     payout_period {
         int period_id PK
         varchar label UK
         date starts_on
-        date ends_on
+        date ends_on "> starts_on, no overlap"
         text status "open | closed"
-        timestamptz closed_at
+        timestamptz closed_at "set iff closed"
     }
     usage_summary {
         int period_id PK,FK
         int track_id PK,FK
         varchar platform_code PK,FK
-        bigint plays
+        bigint plays ">= 0"
     }
     ledger_entry {
         bigint entry_id PK
@@ -125,23 +128,24 @@ erDiagram
         int contract_id FK
         int artist_id FK
         varchar platform_code FK
-        bigint plays
-        numeric effective_pct
-        numeric amount
+        bigint plays ">= 0"
+        numeric effective_pct "0 < x <= 100"
+        numeric amount ">= 0"
         text share_path
+        timestamptz created_at
     }
     payout {
         int payout_id PK
-        int period_id FK
+        int period_id FK "UK with artist_id"
         int artist_id FK
-        numeric amount
+        numeric amount ">= 0"
         text status "pending | paid"
-        timestamptz paid_at
+        timestamptz paid_at "set iff paid"
     }
     audit_log {
         bigint audit_id PK
         text table_name
-        text op
+        text op "INSERT | UPDATE | DELETE"
         text row_pk
         jsonb before
         jsonb after

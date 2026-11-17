@@ -1,0 +1,197 @@
+SELECT pp.label, t.title, p.name AS platform, le.plays, le.effective_pct, le.amount, le.share_path
+FROM   ledger_entry le
+JOIN   payout_period pp ON pp.period_id = le.period_id
+JOIN   track t          ON t.track_id   = le.track_id
+JOIN   platform p       ON p.code       = le.platform_code
+WHERE  le.artist_id = 2
+ORDER  BY pp.starts_on, t.title, p.name;
+  label  |       title        |  platform   | plays  | effective_pct | amount  |                       share_path                        
+---------+--------------------+-------------+--------+---------------+---------+---------------------------------------------------------
+ 2026-08 | Midnight Static    | Spotify     | 100000 |     24.000000 | 96.0000 | The Night Owls 80% > Owl Beats Collective 50% > Kai 60%
+ 2026-08 | Neon Monsoon Drive | Apple Music |  20000 |     50.000000 | 70.0000 | Kai 50%
+(2 rows)
+
+SELECT a.name, SUM(le.amount) AS earned, COUNT(DISTINCT le.track_id) AS tracks
+FROM   ledger_entry le
+JOIN   artist a ON a.artist_id = le.artist_id
+WHERE  le.period_id = 2
+GROUP  BY a.name
+HAVING SUM(le.amount) > 100
+ORDER  BY earned DESC;
+ name |  earned  | tracks 
+------+----------+--------
+ Nova | 260.0000 |      2
+ Kai  | 166.0000 |      2
+ Lina | 134.0000 |      2
+(3 rows)
+
+WITH RECURSIVE expand(artist_id, pct, depth, path) AS (
+    SELECT cs.artist_id, cs.share_pct::NUMERIC, 0, a.name::TEXT
+    FROM   contract_split cs JOIN artist a ON a.artist_id = cs.artist_id
+    WHERE  cs.contract_id = 9
+  UNION ALL
+    SELECT gm.member_id, e.pct * gm.share_pct / 100, e.depth + 1, e.path || ' > ' || m.name
+    FROM   expand e
+    JOIN   artist g        ON g.artist_id = e.artist_id AND g.kind = 'group'
+    JOIN   group_member gm ON gm.group_id = e.artist_id
+    JOIN   artist m        ON m.artist_id = gm.member_id
+)
+SELECT e.path, e.depth, ROUND(e.pct, 2) AS effective_pct
+FROM   expand e JOIN artist a ON a.artist_id = e.artist_id AND a.kind = 'solo'
+ORDER  BY e.pct DESC;
+                     path                     | depth | effective_pct 
+----------------------------------------------+-------+---------------
+ The Night Owls > Nova                        |     1 |         35.00
+ Mira                                         |     0 |         30.00
+ The Night Owls > Owl Beats Collective > Kai  |     2 |         21.00
+ The Night Owls > Owl Beats Collective > Lina |     2 |         14.00
+(4 rows)
+
+SELECT a.name, t.title, x.earned
+FROM  (SELECT le.artist_id, le.track_id, SUM(le.amount) AS earned
+       FROM   ledger_entry le WHERE le.period_id = 2
+       GROUP  BY le.artist_id, le.track_id) x
+JOIN  artist a ON a.artist_id = x.artist_id
+JOIN  track  t ON t.track_id  = x.track_id
+WHERE x.earned = (SELECT MAX(y.earned)
+                  FROM  (SELECT SUM(l2.amount) AS earned
+                         FROM   ledger_entry l2
+                         WHERE  l2.period_id = 2 AND l2.artist_id = x.artist_id
+                         GROUP  BY l2.track_id) y)
+ORDER BY a.name;
+ name |       title        |  earned  
+------+--------------------+----------
+ Kai  | Midnight Static    |  96.0000
+ Lina | Neon Monsoon Drive |  70.0000
+ Mira | Midnight Static    |  80.0000
+ Nova | Midnight Static    | 160.0000
+(4 rows)
+
+SELECT t.track_id, t.title
+FROM   track t
+WHERE  t.track_id IN (SELECT track_id FROM usage_summary)
+  AND  NOT EXISTS (SELECT 1 FROM contract c WHERE c.track_id = t.track_id AND c.status = 'active');
+ track_id | title 
+----------+-------
+(0 rows)
+
+SELECT a.name, p.amount,
+       ROUND(100 * p.amount / SUM(p.amount) OVER (PARTITION BY p.period_id), 2) AS pct_of_period,
+       RANK() OVER (PARTITION BY p.period_id ORDER BY p.amount DESC) AS rnk
+FROM   payout p JOIN artist a ON a.artist_id = p.artist_id
+WHERE  p.period_id = 2;
+ name | amount | pct_of_period | rnk 
+------+--------+---------------+-----
+ Nova | 260.00 |         40.63 |   1
+ Kai  | 166.00 |         25.94 |   2
+ Lina | 134.00 |         20.94 |   3
+ Mira |  80.00 |         12.50 |   4
+(4 rows)
+
+SELECT us.period_id,
+       SUM(us.plays * pl.rate_per_play)                              AS expected,
+       (SELECT SUM(amount) FROM ledger_entry le WHERE le.period_id = us.period_id) AS booked
+FROM   usage_summary us JOIN platform pl ON pl.code = us.platform_code
+WHERE  us.period_id IN (SELECT period_id FROM payout_period WHERE status = 'closed')
+GROUP  BY us.period_id
+HAVING ABS(SUM(us.plays * pl.rate_per_play)
+           - (SELECT SUM(amount) FROM ledger_entry le WHERE le.period_id = us.period_id)) > 0.01;
+ period_id | expected | booked 
+-----------+----------+--------
+(0 rows)
+
+SELECT audit_id, at, op, actor, before ->> 'status' AS old_status, after ->> 'status' AS new_status
+FROM   audit_log
+WHERE  table_name = 'contract' AND row_pk = '1'
+ORDER  BY audit_id;
+ audit_id |              at               |   op   |  actor  | old_status | new_status 
+----------+-------------------------------+--------+---------+------------+------------
+        5 | 2026-11-17 12:16:46.192384+00 | INSERT | royalty |            | draft
+        8 | 2026-11-17 12:16:46.193904+00 | UPDATE | royalty | draft      | active
+       47 | 2026-11-17 12:16:46.207256+00 | UPDATE | royalty | active     | superseded
+(3 rows)
+
+SELECT * FROM search_catalog('night owls');
+  kind  | id |     label      |    rank    
+--------+----+----------------+------------
+ artist |  5 | The Night Owls | 0.09910322
+(1 row)
+
+SELECT * FROM v_active_split ORDER BY track_id, effective_pct DESC;
+ track_id |       title        | contract_id | version | artist_id | artist_name | effective_pct |                        share_path                         
+----------+--------------------+-------------+---------+-----------+-------------+---------------+-----------------------------------------------------------
+        1 | Midnight Static    |           9 |       2 |         1 | Nova        |       35.0000 | The Night Owls 70% > Nova 50%
+        1 | Midnight Static    |           9 |       2 |         3 | Mira        |       30.0000 | Mira 30%
+        1 | Midnight Static    |           9 |       2 |         2 | Kai         |       21.0000 | The Night Owls 70% > Owl Beats Collective 50% > Kai 60%
+        1 | Midnight Static    |           9 |       2 |         4 | Lina        |       14.0000 | The Night Owls 70% > Owl Beats Collective 50% > Lina 40%
+        2 | Paper Lanterns     |           2 |       1 |         1 | Nova        |      100.0000 | Nova 100%
+        3 | Neon Monsoon Drive |           3 |       1 |         2 | Kai         |       50.0000 | Kai 50%
+        3 | Neon Monsoon Drive |           3 |       1 |         4 | Lina        |       50.0000 | Lina 50%
+        4 | Owl Light          |           4 |       1 |         2 | Kai         |       60.0000 | Owl Beats Collective 100% > Kai 60%
+        4 | Owl Light          |           4 |       1 |         4 | Lina        |       40.0000 | Owl Beats Collective 100% > Lina 40%
+        5 | Glass Harbour      |           5 |       1 |         3 | Mira        |       70.0000 | Mira 70%
+        5 | Glass Harbour      |           5 |       1 |         1 | Nova        |       30.0000 | Nova 30%
+        6 | Saltwater Letters  |           6 |       1 |         4 | Lina        |       60.0000 | Lina 60%
+        6 | Saltwater Letters  |           6 |       1 |         2 | Kai         |       25.0000 | Kai 25%
+        6 | Saltwater Letters  |           6 |       1 |         3 | Mira        |       15.0000 | Mira 15%
+        7 | Kerala Skyline     |           7 |       1 |         1 | Nova        |       50.0000 | The Night Owls 100% > Nova 50%
+        7 | Kerala Skyline     |           7 |       1 |         2 | Kai         |       30.0000 | The Night Owls 100% > Owl Beats Collective 50% > Kai 60%
+        7 | Kerala Skyline     |           7 |       1 |         4 | Lina        |       20.0000 | The Night Owls 100% > Owl Beats Collective 50% > Lina 40%
+(17 rows)
+
+SELECT * FROM v_period_totals;
+ period_id |  label  | starts_on  |  ends_on   | status |          closed_at           | tracks_with_usage | total_plays | ledger_total | payout_total | payouts_paid | payouts_total 
+-----------+---------+------------+------------+--------+------------------------------+-------------------+-------------+--------------+--------------+--------------+---------------
+         1 | 2026-09 | 2026-09-01 | 2026-09-30 | open   |                              |                 0 |           0 |            0 |            0 |            0 |             0
+         2 | 2026-08 | 2026-08-01 | 2026-08-31 | closed | 2026-11-17 12:16:46.20291+00 |                 3 |      170000 |     640.0000 |       640.00 |            1 |             4
+(2 rows)
+
+EXPLAIN SELECT * FROM ledger_entry WHERE artist_id = 2 AND period_id = 2;
+                                          QUERY PLAN                                           
+-----------------------------------------------------------------------------------------------
+ Index Scan using idx_ledger_artist_period on ledger_entry  (cost=0.15..8.17 rows=1 width=182)
+   Index Cond: ((artist_id = 2) AND (period_id = 2))
+(2 rows)
+
+INSERT INTO artist (name, kind, email) VALUES ('Demo Artist', 'solo', 'demo@royalty.test')
+RETURNING artist_id, name, kind, email;
+ artist_id |    name     | kind |       email       
+-----------+-------------+------+-------------------
+         7 | Demo Artist | solo | demo@royalty.test
+(1 row)
+
+INSERT 0 1
+UPDATE artist SET name = 'Demo Artist (renamed)' WHERE email = 'demo@royalty.test'
+RETURNING artist_id, name;
+ artist_id |         name          
+-----------+-----------------------
+         7 | Demo Artist (renamed)
+(1 row)
+
+UPDATE 1
+DELETE FROM artist WHERE email = 'demo@royalty.test'
+RETURNING artist_id, name;
+ artist_id |         name          
+-----------+-----------------------
+         7 | Demo Artist (renamed)
+(1 row)
+
+DELETE 1
+UPDATE ledger_entry SET amount = 0 WHERE entry_id = 1;
+psql:sql/demo/queries.sql:107: ERROR:  ledger_entry is append-only: UPDATE is not allowed
+CONTEXT:  PL/pgSQL function fn_ledger_append_only() line 3 at RAISE
+INSERT INTO usage_summary VALUES (2, 4, 'spotify', 10);
+psql:sql/demo/queries.sql:108: ERROR:  Usage of closed period 2026-08 cannot be changed
+CONTEXT:  PL/pgSQL function fn_usage_period_open() line 9 at RAISE
+SELECT mark_payout_paid(1);
+psql:sql/demo/queries.sql:109: ERROR:  Payout 1 is already paid
+CONTEXT:  PL/pgSQL function mark_payout_paid(integer) line 9 at RAISE
+UPDATE contract_split SET share_pct = 50 WHERE contract_id = 9 AND artist_id = 3;
+psql:sql/demo/queries.sql:110: ERROR:  Contract 9 is active; splits can only be edited on a draft
+CONTEXT:  PL/pgSQL function fn_contract_split_draft_only() line 14 at RAISE
+UPDATE group_member SET share_pct = 59 WHERE group_id = 6 AND member_id = 2;
+psql:sql/demo/queries.sql:111: ERROR:  Member shares of group 6 total 99 percent, must be exactly 100
+CONTEXT:  PL/pgSQL function fn_group_member_sum() line 17 at RAISE
+INSERT INTO payout_period (label, starts_on, ends_on) VALUES ('overlap', '2026-08-15', '2026-09-15');
+psql:sql/demo/queries.sql:112: ERROR:  conflicting key value violates exclusion constraint "period_no_overlap"
+DETAIL:  Key (daterange(starts_on, ends_on, '[]'::text))=([2026-08-15,2026-09-16)) conflicts with existing key (daterange(starts_on, ends_on, '[]'::text))=([2026-09-01,2026-10-01)).

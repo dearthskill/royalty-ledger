@@ -9,7 +9,8 @@
 // mongosh numbers are doubles, so integer fields are wrapped in NumberInt
 // (the validators require int/long).
 // =====================================================================
-const target = db.getSiblingDB('royalty_events');
+// Target database: royalty_events, or `var dbName = '...'` passed with --eval (used by scripts/run_mongo_queries.sh).
+const target = db.getSiblingDB(typeof dbName === 'string' ? dbName : 'royalty_events');
 target.usage_events.deleteMany({});
 target.usage_batches.deleteMany({});
 

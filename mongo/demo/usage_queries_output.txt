@@ -1,0 +1,168 @@
+
+// R1 find + projection + sort + limit: one listener's first plays
+[
+  {
+    track_id: 5,
+    platform: 'spotify',
+    played_at: ISODate('2026-09-07T21:47:00.000Z'),
+    device: 'desktop'
+  },
+  {
+    track_id: 5,
+    platform: 'spotify',
+    played_at: ISODate('2026-09-11T03:04:00.000Z'),
+    device: 'desktop'
+  },
+  {
+    track_id: 1,
+    platform: 'apple_music',
+    played_at: ISODate('2026-09-11T22:52:00.000Z'),
+    device: 'smart_speaker'
+  }
+]
+
+// R2 query inside the platform-specific raw field: YouTube plays watched under 60 s
+171
+
+// R3 batches with event counts ($group per batch, $lookup the batch file name)
+[
+  {
+    events: 1200,
+    plays: 1200,
+    file: 'apple_music_2026_09.csv'
+  },
+  {
+    events: 2250,
+    plays: 2250,
+    file: 'spotify_2026_09.csv'
+  },
+  {
+    events: 120,
+    plays: 120,
+    file: 'spotify_2026_09_resend.csv'
+  },
+  {
+    events: 1430,
+    plays: 1430,
+    file: 'youtube_2026_09.json'
+  }
+]
+
+// R4 duplicate detection: same track, platform, listener and timestamp (groups, extra rows)
+{
+  groups: 150,
+  extra_rows: 150
+}
+
+// R5 bot heuristic: listener-hours with more than 20 plays
+[
+  {
+    platform: 'spotify',
+    listener_hash: 'lh_bot_7f3a',
+    hour: ISODate('2026-09-12T14:00:00.000Z'),
+    plays: 150
+  }
+]
+
+// U1 updateMany: void the duplicates (keep the first copy of each group)
+{
+  acknowledged: true,
+  insertedId: null,
+  matchedCount: 150,
+  modifiedCount: 150,
+  upsertedCount: 0
+}
+
+// U2 updateMany: void the bot plays
+{
+  acknowledged: true,
+  insertedId: null,
+  matchedCount: 150,
+  modifiedCount: 150,
+  upsertedCount: 0
+}
+
+// U3 updateOne with $set + $push: dispute the resent batch (note kept in its history)
+{
+  acknowledged: true,
+  insertedId: null,
+  matchedCount: 1,
+  modifiedCount: 1,
+  upsertedCount: 0
+}
+
+//     the batch afterwards
+{
+  source_file: 'spotify_2026_09_resend.csv',
+  status: 'disputed',
+  notes: [
+    {
+      at: ISODate('2026-11-17T12:16:34.974Z'),
+      by: 1,
+      kind: 'dispute',
+      text: 'resend of an earlier report'
+    }
+  ]
+}
+
+//     events by status before the purge
+[
+  {
+    _id: {
+      status: 'valid'
+    },
+    events: 4700
+  },
+  {
+    _id: {
+      status: 'void',
+      reason: 'bot'
+    },
+    events: 150
+  },
+  {
+    _id: {
+      status: 'void',
+      reason: 'duplicate'
+    },
+    events: 150
+  }
+]
+
+// D1 deleteMany: purge voided events
+{
+  acknowledged: true,
+  deletedCount: 300
+}
+
+// R6 aggregateUsage: { track_id, platform, plays } for usage_summary (disputed batches excluded), first 5 rows
+[
+  {
+    plays: 364,
+    track_id: 1,
+    platform: 'apple_music'
+  },
+  {
+    plays: 606,
+    track_id: 1,
+    platform: 'spotify'
+  },
+  {
+    plays: 418,
+    track_id: 1,
+    platform: 'youtube'
+  },
+  {
+    plays: 199,
+    track_id: 2,
+    platform: 'apple_music'
+  },
+  {
+    plays: 362,
+    track_id: 2,
+    platform: 'spotify'
+  }
+]
+
+// Validator: an event without listener_hash is rejected
+Document failed validation (121)

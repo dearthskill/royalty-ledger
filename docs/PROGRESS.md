@@ -47,4 +47,8 @@ Owner A = Rohit, B = Shana. Status: `todo` -> `in progress` -> `PR open` -> `mer
 * WP11: fresh clone from GitHub, README followed step by step on separate ports (5434/27018). Found and fixed:
   the seed command needed `.env` loaded into the shell (it silently hit another MongoDB), `db_reset.sh` could seed
   before the init scripts finished, `psql`/`mongosh` were listed as optional though tests need them, layout list was
-  out of date. Full UI money flow run on the clone (`docs/DEMO.md`). **Still open:** `docs/er-diagram.png` (see WP0 note).
+  out of date. Full UI money flow run on the clone (`docs/DEMO.md`). `docs/er-diagram.png` re-exported on 2026-11-17 (see ER refresh note).
+* ER refresh (2026-11-17): `docs/er-diagram.png` re-exported from `docs/DESIGN.md` with `scripts/render_er.sh` (ELK layout).
+  The old PNG showed the Nov 2 schema (platform_id, artist.stage_name/user_id, period_start/end, audit_log action/old_data).
+  Mermaid fixes: contract -> contract_split is zero-or-more (a track's first draft starts with no splits; 100% is checked
+  only at activation); added created_at columns and constraint notes.

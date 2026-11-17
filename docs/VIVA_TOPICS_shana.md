@@ -54,3 +54,20 @@ Files: `app/admin/periods/PeriodsAdmin.tsx`, `app/admin/periods/[id]/PeriodDetai
 
 Live modification to try: show the batch's `uploaded_at` in the batches table (field is already in the API response), or
 change the duplicates preview to show 20 groups instead of 10 (`slice(0, 10)` in `PeriodDetail.tsx`).
+
+## WP8: artist and auditor views
+Files: `lib/statements.ts`, `app/api/me/statement|payouts/route.ts`, `app/api/audit/route.ts`, `app/me/MyEarnings.tsx`,
+`app/audit/AuditView.tsx`, `tests/api/me-audit.test.ts`; screenshots `docs/screenshots/8-*.png`
+* `statement()` has no `WHERE artist_id = ...`. Prove Nova cannot read Mira's lines, and name the three pieces that make it work. ->
+  `v_artist_statement` (`security_invoker = true`, `02_logic.sql`), policy `ledger_artist` (`03_roles.sql`), `app.artist_id` set in
+  `withDb` (`lib/db.ts`); test "artist A cannot see artist B"
+* What if the view were created without `security_invoker`? -> it would run with the owner's rights and skip RLS: every artist
+  would see every line (try it on a scratch database, never in `sql/init`)
+* Where do audit rows come from, and who is the `actor`? -> `fn_audit` trigger (`02_logic.sql`): `before`/`after` via `to_jsonb(OLD/NEW)`,
+  actor = the `app_user` email for `app.user_id`, else the database role (seed rows show `royalty`)
+* The audit filter takes a table name from the URL. Why is that not SQL injection? -> `AUDITED` whitelist (`z.enum`) and `$1`
+  parameters in `listAudit` (`lib/statements.ts`), test "400 for bad filters"
+* Can the auditor change anything from `/audit`? -> no buttons, and `rl_auditor` has SELECT only (`03_roles.sql`)
+
+Live modification to try: add a "Plays" total row to the statement on `/me`, or add an `op` (INSERT/UPDATE/DELETE) filter to
+`AuditQuery` and the filter form.

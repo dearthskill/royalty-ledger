@@ -61,3 +61,9 @@ Files: `docs/REPORT.md` sections 1-8, `scripts/data_dictionary.sh`
 * Which catalog views/tables does the data dictionary come from, and how are composite UNIQUE keys shown? -> `scripts/data_dictionary.sh`
 * Defend BCNF for `ledger_entry` given it copies `plays` and `effective_pct`. -> REPORT section 4
 * Name the two layers of authorisation and show a request that the second layer stops on its own. -> REPORT section 7, `tests/api/auth.test.ts` withDb tests
+
+## WP11: Final verification and demo
+Files: `docs/DEMO.md`, `README.md`, `scripts/db_reset.sh`
+* Why can a container be "healthy" before `sql/init` has finished, and how does `db_reset.sh` wait correctly? -> `scripts/db_reset.sh`
+* Why does the demo need `scripts/db_reset.sh` before every run? -> closing a period is final (`fn_period_guard`, append-only ledger)
+* Walk the money flow from a CSV row to a paid payout, naming each table/collection and function on the way. -> `docs/DEMO.md` 4:00-6:30

@@ -20,7 +20,7 @@ Owner A = Rohit, B = Shana. Status: `todo` -> `in progress` -> `PR open` -> `mer
 | 9 | End-to-end scenario + API test sweep | B | feat/b-9-e2e-and-test-sweep | #13 | merged | 2026-11-17 |
 | 10a | Report slice A (docs/REPORT.md) | A | feat/a-10a-report-slice | #8 | merged | 2026-11-10 |
 | 10b | Report slice B (docs/REPORT.md) | B | feat/b-10b-report-slice | #14 | merged | 2026-11-17 |
-| 11 | Final verification, demo script | A | | | todo | |
+| 11 | Final verification, demo script | A | feat/a-11-final-verification | #15 | merged | 2026-11-17 |
 
 ## Notes
 * WP-Z: the repository already existed with a first "Add project foundation" commit (Nov 2), so it was kept rather than
@@ -44,3 +44,7 @@ Owner A = Rohit, B = Shana. Status: `todo` -> `in progress` -> `PR open` -> `mer
   `scripts/run_mongo_queries.sh` -> `mongo/demo/usage_queries_output.txt` (both on scratch databases).
 * WP10a: written ahead of B's work packages (it covers only A's slice, all merged). Sections 9-15 of `docs/REPORT.md` are
   placeholders for WP10b. Re-run `scripts/data_dictionary.sh` into section 5 if the schema changes.
+* WP11: fresh clone from GitHub, README followed step by step on separate ports (5434/27018). Found and fixed:
+  the seed command needed `.env` loaded into the shell (it silently hit another MongoDB), `db_reset.sh` could seed
+  before the init scripts finished, `psql`/`mongosh` were listed as optional though tests need them, layout list was
+  out of date. Full UI money flow run on the clone (`docs/DEMO.md`). **Still open:** `docs/er-diagram.png` (see WP0 note).

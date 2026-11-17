@@ -73,6 +73,7 @@ Pages are guarded by `proxy.ts` / `middleware.ts`: no session -> redirect to `/l
 | GET | /api/tracks/:id | \* | | `{ track }`; 404 |
 | PATCH | /api/tracks/:id | A | `{ title?, isrc?, primary_artist_id?, released_on? }` | `{ track }` |
 | DELETE | /api/tracks/:id | A | | 204; 409 if it has contracts or usage |
+| GET | /api/platforms | \* | | `{ platforms: [{ code, name, rate_per_play }] }` sorted by name (added in WP7 for the upload form) |
 | GET | /api/search | \* | `?q=` | `{ results: [{ kind: 'track'\|'artist', id, label, rank }] }` (`search_catalog`, prefix match) |
 
 `artist` = `{ artist_id, name, kind, email, created_at }`.

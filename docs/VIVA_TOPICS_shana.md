@@ -38,3 +38,19 @@ Files: `lib/payouts.ts`, `app/api/periods/[id]/aggregate|close|ledger/route.ts`,
 Live modification to try: change a platform rate (`UPDATE platform SET rate_per_play = 0.005 WHERE code = 'spotify'`) in a
 scratch period before closing it and compare the ledger amounts; or add `ORDER BY amount DESC` to `listPayouts` and
 watch the payouts table reorder.
+
+## WP7: admin UI for usage and payouts
+Files: `app/admin/periods/PeriodsAdmin.tsx`, `app/admin/periods/[id]/PeriodDetail.tsx`, `components/StatusBadge.tsx`,
+`components/api.ts` (FormData uploads), `app/api/platforms/route.ts`; screenshots `docs/screenshots/7-*.png`
+* Where does the text "conflicting key value violates exclusion constraint period_no_overlap" come from, and how does it reach
+  the screen unchanged? -> `payout_period` EXCLUDE constraint, `errorResponse` in `lib/http.ts` (23P01 -> 409), `ErrorBox`
+* How does the upload screen show every bad row? -> `upload` in `PeriodDetail.tsx` reads `details`, built by `validateImport`
+* Why are "Preview" and "Write" separate buttons for duplicates, bots and aggregate? -> GET vs POST routes; `preview: true`
+  in `/aggregate` never writes (`lib/payouts.ts`)
+* Why do the write buttons disappear once a period is closed, and what still stops a forged request? -> `open` flag in
+  `PeriodDetail.tsx`; `requireOpenPeriod` (MongoDB writes) and `trg_usage_period_open` / `close_payout_period` (PostgreSQL)
+* What happens in the browser if two admins press Pay together? -> second request gets 409 `Payout N is already paid`
+  (`mark_payout_paid` row lock), shown in the error box
+
+Live modification to try: show the batch's `uploaded_at` in the batches table (field is already in the API response), or
+change the duplicates preview to show 20 groups instead of 10 (`slice(0, 10)` in `PeriodDetail.tsx`).

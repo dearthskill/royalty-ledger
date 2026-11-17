@@ -15,7 +15,7 @@ Owner A = Rohit, B = Shana. Status: `todo` -> `in progress` -> `PR open` -> `mer
 | 4 | Contracts API | A | feat/a-4-contracts-api | #6 | merged | 2026-11-10 |
 | 5 | Aggregate, close, ledger, payouts | B | feat/b-5-aggregate-close-payouts | #10 | merged | 2026-11-17 |
 | 6 | Admin UI: catalogue and contracts | A | feat/a-6-admin-catalogue-ui | #7 | merged | 2026-11-10 |
-| 7 | Admin UI: usage and payouts | B | | | todo | |
+| 7 | Admin UI: usage and payouts | B | feat/b-7-admin-usage-payouts-ui | #11 | merged | 2026-11-17 |
 | 8 | Artist and auditor views | B | | | todo | |
 | 9 | End-to-end scenario + API test sweep | B | | | todo | |
 | 10a | Report slice A (docs/REPORT.md) | A | feat/a-10a-report-slice | #8 | merged | 2026-11-10 |
@@ -36,5 +36,7 @@ Owner A = Rohit, B = Shana. Status: `todo` -> `in progress` -> `PR open` -> `mer
   `mongo/pipelines/usage_ops.d.ts` types the CommonJS pipeline for the TypeScript routes.
 * WP5: API test files share one scratch PostgreSQL database, so tests that count rows scope them to seeded
   periods (`payouts.test.ts` closes its own periods 2026-10..12; the ledger is append-only and cannot be cleaned up).
+* WP7: added `GET /api/platforms` (read-only, all roles) for the upload form; noted in `docs/API_CONTRACT.md`.
+  Import errors now list unknown track ids together with the other row errors.
 * WP10a: written ahead of B's work packages (it covers only A's slice, all merged). Sections 9-15 of `docs/REPORT.md` are
   placeholders for WP10b. Re-run `scripts/data_dictionary.sh` into section 5 if the schema changes.

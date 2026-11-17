@@ -100,9 +100,10 @@ describe('withDb', () => {
   it('runs as the database role of the session and sets app.* for RLS and audit', async () => {
     const r = await withDb(session('artist', 3), async c =>
       (await c.query(`SELECT current_user AS who, current_setting('app.artist_id') AS artist,
-                             (SELECT COUNT(*) FROM payout) AS payouts`)).rows[0]);
+                             (SELECT COUNT(*) FROM payout WHERE period_id = 2) AS payouts`)).rows[0]);
     expect(r).toEqual({ who: 'rl_artist', artist: '3', payouts: 1 });   // Mira's August payout only
-    const a = await withDb(session('auditor'), async c => (await c.query('SELECT current_user AS who, (SELECT COUNT(*) FROM payout) AS n')).rows[0]);
+    // (scoped to the seeded August period: other test files close periods of their own)
+    const a = await withDb(session('auditor'), async c => (await c.query('SELECT current_user AS who, (SELECT COUNT(*) FROM payout WHERE period_id = 2) AS n')).rows[0]);
     expect(a).toEqual({ who: 'rl_auditor', n: 4 });
   });
 

@@ -330,22 +330,202 @@ Next.js Route Handlers (app/api/**)  ── route(roles) → zod → withDb / mo
 ---------------------------------------------------------------------------------------------------
 
 ## 9. MongoDB: usage ingestion and cleaning
-_Member B, WP10b._
+
+### 9.1 Why a document store here
+Each platform sends a different report: Spotify adds `playlist`, `premium`, `shuffle`; YouTube adds `watch_seconds`,
+`ad_supported`, `surface`; Apple Music adds `storefront`, `lossless`, `library_add`. Reports are large, written once,
+then cleaned (voided, disputed, purged) and summarised. MongoDB keeps each event as one document with the common fields
+validated and the platform-specific fields in `raw`, untouched. Aggregation pipelines do the cleaning and the summary.
+Money never lives in MongoDB: only the summary `{ track_id, platform, plays }` crosses into PostgreSQL (section 10).
+
+### 9.2 Collections (`mongo/init/01_init.js`)
+| Collection | Holds | Validator (`$jsonSchema`, strict) | Indexes |
+|---|---|---|---|
+| `usage_batches` | one uploaded report: `period_id`, `platform`, `source_file`, `uploaded_by`, `uploaded_at`, `row_count`, `status`, `notes[]` | required fields, `status` in `uploaded / cleaned / disputed / aggregated`, note kinds, no extra fields | `{period_id, status}` |
+| `usage_events` | one play line: `batch_id`, `period_id`, `track_id`, `platform`, `plays`, `listener_hash`, `played_at`, `device`, `status`, `void_reason`, `raw` | ints for ids and plays (`plays >= 1`), `status` `valid / void`, `void_reason` `duplicate / bot / manual`, `raw` is an object | `{period_id, status}`, `{batch_id}`, `{track_id, platform, listener_hash, played_at}` |
+
+The batch `notes[]` array is the batch's history: every clean, dispute, resolve, purge and aggregate step `$push`es
+`{ at, by, kind, text }`, so the review trail stays inside the document it describes.
+
+### 9.3 Operations (`mongo/pipelines/usage_ops.js`, API in `app/api/periods/[id]/usage/*`, `app/api/usage/batches/*`)
+| Kind | Operation | Route | How |
+|---|---|---|---|
+| Create | `ingest` | `POST /api/periods/:id/usage/import` | `insertOne` batch + `insertMany` events; compensating delete if the events fail (no replica set, so no multi-document transaction) |
+| Read | `listBatches`, `batchStats` | `GET /api/usage/batches?period_id=` | `find` + `$group` by batch and status |
+| Read | `findDuplicates` | `GET /api/periods/:id/usage/duplicates` | `$group` on track, platform, listener, timestamp; groups with `n > 1`; first-inserted copy is kept |
+| Read | `findFlagged` | `GET /api/periods/:id/usage/flagged` | `$group` by listener and `$dateTrunc` hour; more than `max_per_hour` (default 20) plays |
+| Update | `voidDuplicates`, `voidFlagged` | `POST .../void-duplicates`, `.../void-flagged` | `updateMany` `$set: { status: 'void', void_reason }`; batch becomes `cleaned` |
+| Update | `disputeBatch`, `resolveDispute` | `POST /api/usage/batches/:id/dispute`, `.../resolve` | `updateOne` with the rule in the filter (`status != 'aggregated'` / `status = 'disputed'`), `$set` + `$push` note; atomic check-and-write |
+| Delete | `purgeVoided` | `DELETE /api/periods/:id/usage/voided` | `deleteMany` voided events |
+| Read | `aggregateUsage` | `POST /api/periods/:id/aggregate` | valid events of non-disputed batches, `$group` per track and platform |
+
+**Import validation (`lib/usage.ts`).** CSV (header row, any column order, quoted fields) or JSON. Every row is checked
+with zod (`track_id` and `plays` whole numbers, `listener_hash` present, `played_at` an ISO timestamp inside the period);
+`platform` and every `track_id` are checked against PostgreSQL. Problems are collected per row; if there is any, the whole
+upload is refused with 1-based row numbers and nothing is stored:
+```
+400 { "error": "2 invalid rows", "details": [
+  { "row": 2, "message": "plays: must be >= 1" },
+  { "row": 3, "message": "played_at: 2026-10-02T10:00:00Z is outside period 2026-09; track_id: track 99 does not exist" } ] }
+```
+**Closed periods.** MongoDB has no triggers or foreign keys to PostgreSQL, so every usage write first reads the period
+status from PostgreSQL (`requireOpenPeriod`) and refuses with `409 Period 2026-08 is closed`.
+
+### 9.4 Real output (`scripts/run_mongo_queries.sh` -> `mongo/demo/usage_queries_output.txt`)
+The script builds a scratch database from `mongo/init` and the deterministic seed (5,000 events in 4 batches, with a resent
+Spotify report, in-file YouTube duplicates and one bot listener), runs `mongo/demo/usage_queries.js` and drops it.
+| Step | Result |
+|---|---|
+| R2 query inside `raw`: YouTube plays watched under 60 s | 171 events |
+| R3 events per batch (`$group` + `$lookup`) | apple_music 1200, spotify 2250, spotify resend 120, youtube 1430 |
+| R4 duplicates | 150 groups, 150 extra rows |
+| R5 bot heuristic | `lh_bot_7f3a`, Spotify, 2026-09-12 14:00 UTC, 150 plays in one hour |
+| U1 / U2 void duplicates / bots (`updateMany`) | 150 + 150 modified |
+| U3 dispute the resend (`updateOne`, `$set` + `$push`) | status `disputed`, note in `notes[]` |
+| D1 purge voided (`deleteMany`) | 300 deleted (4,700 valid events remain) |
+| R6 `aggregateUsage` (resend excluded while disputed) | `{ track_id: 1, platform: 'apple_music', plays: 364 }`, … |
+| Validator | event without `listener_hash` -> `Document failed validation (121)` |
 
 ## 10. Payouts: aggregate, close, pay
-_Member B, WP10b._
+
+### 10.1 Aggregate: MongoDB -> `usage_summary` (`lib/payouts.ts`)
+`POST /api/periods/:id/aggregate` (`preview: true` only shows the rows):
+1. 409 if the period is closed, or if any batch is `disputed` (`Period 2026-10 has disputed batches (spotify.json); resolve them first`).
+2. `aggregateUsage` returns `[{ track_id, platform, plays }]`. Every `track_id` must exist in `track` and every
+   `platform` in `platform.code`; otherwise 400 listing the unknown values, nothing written.
+3. One PostgreSQL transaction: `SELECT ... FROM payout_period ... FOR UPDATE` (the same row lock `close_payout_period`
+   takes, so the two cannot interleave), `DELETE` the period's `usage_summary`, `INSERT ... SELECT FROM unnest(...)` the new
+   rows. `trg_usage_period_open` still guards the table against closed periods.
+4. After the commit the batches are marked `aggregated`. If that step failed, aggregating again rewrites the same
+   summary, so nothing is ever counted twice.
+
+### 10.2 Close (`close_payout_period`, `02_logic.sql`)
+`POST /api/periods/:id/close` only runs `CALL close_payout_period($1)`. In one transaction the procedure locks the period,
+refuses a closed or empty period and any track without an active contract, writes one `ledger_entry` per usage row and
+payee (`plays × rate_per_play × effective_pct / 100`, rounded to 4 places, with the `share_path`), sums them per artist
+into `payout` (2 places) and marks the period closed. Its messages are returned unchanged with status 409:
+`Period 2026-08 is already closed`, `Period 2026-12 has no usage loaded; aggregate usage first`,
+`Cannot close period 2026-11: no active contract for Unfinished Demo`.
+
+Worked example (end-to-end test, period 2029-01, contract Kai 60 / Lina 40):
+| Platform | Plays | Rate | Gross | Kai 60% | Lina 40% |
+|---|---|---|---|---|---|
+| spotify | 1,000 (after voiding one duplicate) | 0.004 | 4.00 | 2.40 | 1.60 |
+| youtube | 1,000 | 0.002 | 2.00 | 1.20 | 0.80 |
+| **payout** | | | 6.00 | **3.60** | **2.40** |
+
+### 10.3 Ledger and payouts
+* `GET /api/periods/:id/ledger?artist_id=&track_id=` (admin, auditor): ledger lines with track, payee, plays, effective
+  share, amount and share path. The application has no code that updates or deletes `ledger_entry`, and
+  `fn_ledger_append_only` would refuse it anyway.
+* `GET /api/payouts?period_id=` (all roles). For an artist the same query returns only their rows, because of the RLS policy
+  `payout_artist`.
+* `POST /api/payouts/:id/pay` runs `mark_payout_paid`, which locks the payout row (`SELECT ... FOR UPDATE`) and raises if it
+  is already paid. Two simultaneous requests therefore produce one 200 and one `409 Payout 5 is already paid`.
+  `tests/api/payouts.test.ts` sends them with `Promise.all`.
+
+![Period page: batches, duplicate and bot previews, aggregate preview](screenshots/7-period-cleaning.png)
 
 ## 11. Audit trail and auditor view
-_Member B, WP10b._
+`fn_audit` (a generic trigger on `contract`, `contract_split`, `group_member`, `payout`, `payout_period`) writes one
+`audit_log` row per change: table, operation, primary key, `before` and `after` as JSONB (`to_jsonb(OLD/NEW)`), the actor
+(the `app_user` email found from `app.user_id`, which `withDb` sets; the database role for the seed script) and the time.
+* `GET /api/audit` (auditor, admin): filters `table` (a whitelist, `z.enum`), `row_pk`, `actor` (partial match), `from` /
+  `to` (dates, `to` inclusive) and `limit` (1–500, default 100). All of them are query parameters (`$1`…`$6`).
+* `/audit` shows the trail with the changed keys per row and the full before/after JSON on click. A read-only
+  "Ledger & payouts" tab shows any period's ledger and payouts. `rl_auditor` has SELECT only, so the page has no write
+  actions, and the database would refuse them.
+* `/me` (artists): payouts and the statement per period from `v_artist_statement`. The view is `security_invoker`, so
+  `ledger_artist` applies and the query needs no `WHERE artist_id`. Nova sees her two August lines (160.0000 through
+  `The Night Owls 80% > Nova 50%` and 100.0000 for Paper Lanterns), which add up to her 260.00 payout. Mira's page shows
+  none of them.
+
+![Audit trail: payout paid, before and after](screenshots/8-audit-trail.png)
 
 ## 12. Important queries
-_Member B, WP10b (`sql/demo/queries.sql` with real output: joins, GROUP BY/HAVING, nested, correlated, recursive)._
+`sql/demo/queries.sql`; real output from a fresh seeded database in `sql/demo/queries_output.txt`
+(`scripts/run_queries.sh`).
+
+| # | Concept | Query | Result on the seed |
+|---|---|---|---|
+| Q1 | 4-table JOIN | Kai's statement lines | 2 rows, e.g. Midnight Static, Spotify, 100000 plays, 24%, 96.0000, `The Night Owls 80% > Owl Beats Collective 50% > Kai 60%` |
+| Q2 | GROUP BY + HAVING | artists who earned more than 100 in 2026-08 | Nova 260.0000, Kai 166.0000, Lina 134.0000 (Mira's 80 is filtered out) |
+| Q3 | Recursive CTE | expand contract 9 through nested groups | Nova 35.00 (depth 1), Mira 30.00, Kai 21.00 and Lina 14.00 (depth 2) = 100 |
+| Q4 | Correlated subquery | each artist's top-earning track | Kai: Midnight Static 96.0000, Lina: Neon Monsoon Drive 70.0000, Mira 80.0000, Nova 160.0000 |
+| Q5 | Nested `IN` / `NOT EXISTS` | tracks with usage but no active contract | 0 rows (the check `close_payout_period` relies on) |
+| Q6 | Window functions | share of the period and rank | Nova 40.63% rank 1 … Mira 12.50% rank 4 |
+| Q7 | HAVING + scalar subqueries | ledger = plays × rate for every closed period | 0 rows: the books balance |
+| Q8 | JSONB | audit history of contract 1 | INSERT draft -> UPDATE active -> UPDATE superseded |
+| Q9 | Full-text search, views | `search_catalog('night owls')`, `v_active_split`, `v_period_totals` | The Night Owls (rank 0.099); 17 resolved payee rows; period totals |
+| Q10 | Index use | `EXPLAIN` on the ledger lookup | `Index Scan using idx_ledger_artist_period` |
+| Q11 | DML | INSERT / UPDATE / DELETE … RETURNING | artist 7 created, renamed, deleted |
+| Q12 | Rules in the database | six forbidden changes | all refused, see below |
+
+Q12 output (verbatim):
+```
+UPDATE ledger_entry ...            ERROR:  ledger_entry is append-only: UPDATE is not allowed
+INSERT INTO usage_summary (2,...)  ERROR:  Usage of closed period 2026-08 cannot be changed
+SELECT mark_payout_paid(1)         ERROR:  Payout 1 is already paid
+UPDATE contract_split (contract 9) ERROR:  Contract 9 is active; splits can only be edited on a draft
+UPDATE group_member -> 59 + 40     ERROR:  Member shares of group 6 total 99 percent, must be exactly 100
+INSERT overlapping payout_period   ERROR:  conflicting key value violates exclusion constraint "period_no_overlap"
+```
 
 ## 13. Testing results
-_Member B, WP10b._
+Run on 2026-11-17 against the docker-compose PostgreSQL 16 and MongoDB 7. API tests call the real route handlers. Each run
+builds its own scratch PostgreSQL database from `sql/init` and a scratch MongoDB database from `mongo/init`, and drops both
+afterwards, so dev data is never touched.
+
+**`npm test`: 9 files, 137 tests, all passing** (also with `--sequence.shuffle.files`):
+| File | Tests | Covers |
+|---|---|---|
+| `tests/api/auth.test.ts` | 11 | login, session cookie, 401 / 403, page guard, `withDb` role switch and rollback |
+| `tests/api/catalogue.test.ts` | 9 | artists, group members (99%, cycles), tracks, search |
+| `tests/api/contracts.test.ts` | 13 | draft, splits, activate (90% refused), delete, effective split, history |
+| `tests/api/usage.test.ts` | 20 | periods, CSV and JSON import, row errors, duplicates, bots, purge, dispute, resolve, closed period |
+| `tests/api/payouts.test.ts` | 14 | aggregate (preview, disputed, unknown ids, replace), close, ledger, RLS on payouts, pay, **concurrent pay** |
+| `tests/api/me-audit.test.ts` | 6 | artist statement and payouts (artist A cannot see artist B), audit filters |
+| `tests/api/e2e.test.ts` | 8 | full money flow: track -> contract -> upload -> clean -> aggregate -> close -> pay -> artist view -> audit |
+| `tests/api/sweep.test.ts` | 46 | one success and one failure for each of the 45 route methods, plus a guard test |
+| `mongo/tests/usage_ops.test.js` | 10 | validators, ingest, duplicates, bots, dispute, purge, aggregation shape |
+
+**`scripts/test_db.sh`: 20 SQL test groups, `ALL TESTS PASSED`.** These cover nested splits, group totals (deferred),
+cycles, draft-only edits, 90% activation, one active contract, constraints, the append-only ledger, closed-period
+immutability, double close, a missing contract, close end to end, pay once, RLS isolation, auditor read-only, the audit
+trail, search and views.
+
+Also checked: `npx tsc --noEmit` and `npx next build` are clean, and the screens were driven in headless Chromium
+(Playwright) against `next start`.
 
 ## 14. Screenshots
-_Member B, WP10b._
+All in `docs/screenshots/`, taken with headless Chromium against the seeded data.
+
+| Screen | File |
+|---|---|
+| Periods list | `7-periods.png` |
+| Overlapping period refused by PostgreSQL | `7-periods-overlap-error.png` |
+| Upload rejected with row numbers | `7-upload-rejected.png` |
+| Batches, duplicate and bot previews, aggregate preview | `7-period-cleaning.png` |
+| Disputed batch blocks aggregation | `7-batch-disputed.png` |
+| Closed period: ledger with share paths, payouts with Pay | `7-period-closed-ledger.png` |
+| Artist view (Nova / Mira) | `8-me-nova.png`, `8-me-mira.png` |
+| Auditor: audit trail with before/after | `8-audit-trail.png` |
+| Auditor: read-only ledger and payouts | `8-audit-ledger.png` |
+
+![Upload rejected with row numbers](screenshots/7-upload-rejected.png)
+
+![Closed period: ledger and payouts](screenshots/7-period-closed-ledger.png)
+
+![Nova's earnings: only her own lines](screenshots/8-me-nova.png)
 
 ## 15. Conclusion
-_Member B, WP10b._
+The system replaces spreadsheet splits with versioned contracts and an append-only ledger. Each part runs on the database
+that suits it. PostgreSQL holds everything that is money or ownership, and its rules are in the database itself: exact
+100% splits checked at commit, frozen contracts and closed periods, a ledger that cannot be edited, payouts that cannot be
+paid twice, and row-level security so that an artist's queries only ever return their own rows. MongoDB takes the noisy,
+platform-specific usage reports and cleans them with aggregation pipelines. Only a small, validated
+`{ track_id, platform, plays }` summary reaches the money side.
+
+What we would add next: a replica set so that a MongoDB upload and its cleaning steps can run in multi-document
+transactions; streaming CSV parsing for very large reports; currency and per-territory rates on `platform`; and payout
+export files for the bank.

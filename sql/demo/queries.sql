@@ -13,7 +13,7 @@ JOIN   platform p       ON p.code       = le.platform_code
 WHERE  le.artist_id = 2
 ORDER  BY pp.starts_on, t.title, p.name;
 
--- Q2  GROUP BY + HAVING + aggregates: artists who earned more than 1000 in a period
+-- Q2  GROUP BY + HAVING + aggregates: artists who earned more than 100 in a period
 SELECT a.name, SUM(le.amount) AS earned, COUNT(DISTINCT le.track_id) AS tracks
 FROM   ledger_entry le
 JOIN   artist a ON a.artist_id = le.artist_id
@@ -93,3 +93,21 @@ EXPLAIN SELECT * FROM ledger_entry WHERE artist_id = 2 AND period_id = 2;
 --   session A:  BEGIN; SELECT mark_payout_paid(2);          -- holds the row lock
 --   session B:  SELECT mark_payout_paid(2);                  -- blocks...
 --   session A:  COMMIT;                                      -- B now fails: "already paid"
+
+-- Q11 DML: INSERT / UPDATE / DELETE with RETURNING (a scratch artist, removed again)
+INSERT INTO artist (name, kind, email) VALUES ('Demo Artist', 'solo', 'demo@royalty.test')
+RETURNING artist_id, name, kind, email;
+UPDATE artist SET name = 'Demo Artist (renamed)' WHERE email = 'demo@royalty.test'
+RETURNING artist_id, name;
+DELETE FROM artist WHERE email = 'demo@royalty.test'
+RETURNING artist_id, name;
+
+-- Q12 Rules enforced by the database: each statement below is refused (errors are expected).
+\set ON_ERROR_STOP off
+UPDATE ledger_entry SET amount = 0 WHERE entry_id = 1;                         -- append-only ledger
+INSERT INTO usage_summary VALUES (2, 4, 'spotify', 10);                         -- period 2026-08 is closed
+SELECT mark_payout_paid(1);                                                     -- already paid
+UPDATE contract_split SET share_pct = 50 WHERE contract_id = 9 AND artist_id = 3; -- active contract: splits frozen
+UPDATE group_member SET share_pct = 59 WHERE group_id = 6 AND member_id = 2;     -- shares no longer total 100 (checked at COMMIT)
+INSERT INTO payout_period (label, starts_on, ends_on) VALUES ('overlap', '2026-08-15', '2026-09-15'); -- overlaps 2026-08
+\set ON_ERROR_STOP on

@@ -63,7 +63,7 @@ To repeat the demo, run `scripts/db_reset.sh` again (closing a period is final b
 ## Rubric checklist (2026-11-17)
 | Row | Marks | Evidence | Status |
 |---|---|---|---|
-| ER diagram | 2 | Mermaid in `docs/DESIGN.md` §4 | **Open:** `docs/er-diagram.png` (used in REPORT §3) still shows the Nov 2 schema; re-export from the Mermaid block |
+| ER diagram | 2 | Mermaid in `docs/DESIGN.md` §4, `docs/er-diagram.png` (REPORT §3) | ok (re-exported 2026-11-17 with `scripts/render_er.sh`) |
 | Relational schema, keys, constraints | 3 | `01_schema.sql`, REPORT §4–5 (generated data dictionary) | ok |
 | SQL DDL with constraints | 4 | `01_schema.sql`, `sql/demo/ddl_demo.sql` | ok |
 | NoSQL creation | 4 | `mongo/init/01_init.js` (validators, indexes), import route | ok |

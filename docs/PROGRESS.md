@@ -21,6 +21,7 @@ Owner A = Rohit, B = Shana. Status: `todo` -> `in progress` -> `PR open` -> `mer
 | 10a | Report slice A (docs/REPORT.md) | A | feat/a-10a-report-slice | #8 | merged | 2026-11-10 |
 | 10b | Report slice B (docs/REPORT.md) | B | feat/b-10b-report-slice | #14 | merged | 2026-11-17 |
 | 11 | Final verification, demo script | A | feat/a-11-final-verification | #15 | merged | 2026-11-17 |
+| 12 | Artist profile: add tracks with contributing artists | A | feat/a-12-artist-profile-tracks | #18 | merged | 2026-11-20 |
 
 ## Notes
 * WP-Z: the repository already existed with a first "Add project foundation" commit (Nov 2), so it was kept rather than
@@ -52,3 +53,8 @@ Owner A = Rohit, B = Shana. Status: `todo` -> `in progress` -> `PR open` -> `mer
   The old PNG showed the Nov 2 schema (platform_id, artist.stage_name/user_id, period_start/end, audit_log action/old_data).
   Mermaid fixes: contract -> contract_split is zero-or-more (a track's first draft starts with no splits; 100% is checked
   only at activation); added created_at columns and constraint notes.
+* WP12 (2026-11-20, requested change): tracks are created from the artist profile `/admin/artists/[id]` instead of the
+  dropdown form on `/admin/tracks`. `POST /api/artists/:id/tracks` writes the track, its version-1 draft, the
+  contributors' splits and (optionally) the activation in one transaction. `POST /api/tracks` is kept for the API.
+  The group member editor moved from the artist list to the profile. "Contributor" means a direct split on the newest
+  draft/active contract; artists paid only through a group are not listed on their own profile.

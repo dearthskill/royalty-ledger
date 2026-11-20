@@ -56,6 +56,14 @@ Files: `app/admin/artists/*`, `app/admin/tracks/**`, `components/{ShareEditor,Se
 * How does the search box reach the database, and what index serves it? -> `SearchBox` -> `/api/search` -> `search_catalog` -> GIN `idx_track_search`
 * Live modification to try: show each artist's effective % next to the draft editor (call `resolve_contract_split` for the draft).
 
+## Artist profile: tracks with contributing artists (after WP11)
+Files: `app/api/artists/[id]/tracks/route.ts`, `lib/catalog.ts` (`ArtistTrackCreate`, `listArtistTracks`), `app/admin/artists/[id]/ArtistProfile.tsx`, `app/admin/artists/MembersEditor.tsx`, `docs/screenshots/12-*.png`
+* What happens to the new track row when activation fails at 90%, and why? -> `POST` in `app/api/artists/[id]/tracks/route.ts` runs inside one `withDb` transaction; `activate_contract` raises, ROLLBACK
+* Why is a contributor stored as a contract split rather than in a separate table? -> `contract_split` already links artists to a track's money; `listArtistTracks` reads it
+* Which contract version decides whether an artist is listed as a contributor? -> `latest` CTE (`DISTINCT ON`) in `listArtistTracks`
+* Why can artists not call `GET /api/artists/:id/tracks`? -> contract shares are staff-only; `route(['admin','auditor'], …)`
+* Live modification to try: also list tracks where the artist is paid through a group (use `resolve_split` / `v_active_split`).
+
 ## WP10a: Report slice A
 Files: `docs/REPORT.md` sections 1-8, `scripts/data_dictionary.sh`
 * Which catalog views/tables does the data dictionary come from, and how are composite UNIQUE keys shown? -> `scripts/data_dictionary.sh`

@@ -38,6 +38,14 @@ export const TrackCreate = z.object({
 });
 export const TrackPatch = TrackCreate.partial().strict();
 
+// New track from an artist's profile: the artist is the primary artist, `splits` are the
+// contributing artists (usually including the artist) for the first contract version.
+export const ArtistTrackCreate = TrackCreate.omit({ primary_artist_id: true }).extend({
+  splits: z.array(z.object({ artist_id: Id, share_pct: SharePct })).min(1, 'add at least one contributing artist'),
+  activate: z.boolean().default(false),
+}).refine(b => new Set(b.splits.map(s => s.artist_id)).size === b.splits.length,
+  { message: 'each artist may appear only once', path: ['splits'] });
+
 // ---------- artists ----------
 const ARTIST_COLS = 'artist_id, name, kind, email, created_at';
 
@@ -79,4 +87,27 @@ export async function getTrack(c: PoolClient, session: Session, id: number) {
   const { rows } = await c.query(`${trackSelect(session)} WHERE t.track_id = $1`, [id]);
   if (!rows[0]) throw new HttpError(404, `Track ${id} not found`);
   return rows[0];
+}
+
+// Tracks on an artist's profile: where they are the primary artist, or a contributor in the
+// track's newest contract version (draft or active). `share_pct` is that contributor share.
+export async function listArtistTracks(c: PoolClient, artistId: number) {
+  await getArtist(c, artistId);   // 404 first
+  const { rows } = await c.query(
+    `WITH latest AS (
+       SELECT DISTINCT ON (track_id) contract_id, track_id, version, status
+       FROM   contract
+       WHERE  status IN ('draft', 'active')
+       ORDER  BY track_id, version DESC
+     )
+     SELECT t.track_id, t.title, t.isrc, t.released_on, t.primary_artist_id, pa.name AS primary_artist_name,
+            CASE WHEN t.primary_artist_id = $1 THEN 'primary' ELSE 'contributor' END AS role,
+            l.version AS contract_version, l.status AS contract_status, cs.share_pct
+     FROM   track t
+     JOIN   artist pa             ON pa.artist_id = t.primary_artist_id
+     LEFT   JOIN latest l         ON l.track_id = t.track_id
+     LEFT   JOIN contract_split cs ON cs.contract_id = l.contract_id AND cs.artist_id = $1
+     WHERE  t.primary_artist_id = $1 OR cs.artist_id IS NOT NULL
+     ORDER  BY t.released_on DESC NULLS FIRST, t.title`, [artistId]);
+  return rows;
 }

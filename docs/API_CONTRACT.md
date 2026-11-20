@@ -68,6 +68,8 @@ Pages are guarded by `proxy.ts` / `middleware.ts`: no session -> redirect to `/l
 | DELETE | /api/artists/:id | A | | 204; 409 if still referenced (tracks, splits, logins) |
 | GET | /api/artists/:id/members | A, U | | `{ members: [{ member_id, name, kind, share_pct }], total_pct }` |
 | PUT | /api/artists/:id/members | A | `{ members: [{ member_id, share_pct }] }` | `{ members, total_pct }`; replaces the whole set in one transaction; 409 on sum != 100, cycle, not a group |
+| GET | /api/artists/:id/tracks | A, U | | `{ tracks: [{ track_id, title, isrc, released_on, primary_artist_id, primary_artist_name, role: 'primary'\|'contributor', contract_version, contract_status, share_pct }] }`; contributor = in the newest draft/active contract's splits; 404 |
+| POST | /api/artists/:id/tracks | A | `{ title, isrc, released_on?, splits: [{ artist_id, share_pct }], activate? }` | 201 `{ track, contract }`; one transaction: track (this artist as primary) + `create_contract_draft` + splits + optional `activate_contract`; 409 with the database message (e.g. not 100%) and nothing is created |
 | GET | /api/tracks | \* | | `{ tracks: [track] }` sorted by title |
 | POST | /api/tracks | A | `{ title, isrc, primary_artist_id, released_on? }` | 201 `{ track }` |
 | GET | /api/tracks/:id | \* | | `{ track }`; 404 |
@@ -150,5 +152,5 @@ Either `multipart/form-data` with fields `platform` and `file` (`.csv` or `.json
 `audit` = `{ audit_id, table_name, op, row_pk, before, after, actor, at }`.
 
 ## Pages
-`/login` · Admin: `/admin/artists`, `/admin/tracks`, `/admin/tracks/[id]` (WP6), `/admin/periods`,
+`/login` · Admin: `/admin/artists`, `/admin/artists/[id]` (profile: members, tracks, new track with contributors), `/admin/tracks`, `/admin/tracks/[id]` (WP6), `/admin/periods`,
 `/admin/periods/[id]` (WP7) · Artist: `/me` (WP8) · Auditor: `/audit` (WP8).

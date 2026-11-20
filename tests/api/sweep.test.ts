@@ -10,6 +10,7 @@ import { GET as authMe } from '@/app/api/auth/me/route';
 import * as artists from '@/app/api/artists/route';
 import * as artist from '@/app/api/artists/[id]/route';
 import * as members from '@/app/api/artists/[id]/members/route';
+import * as artistTracks from '@/app/api/artists/[id]/tracks/route';
 import * as tracks from '@/app/api/tracks/route';
 import * as track from '@/app/api/tracks/[id]/route';
 import * as trackContracts from '@/app/api/tracks/[id]/contracts/route';
@@ -94,6 +95,11 @@ const cases: Case[] = [
   { route: 'PUT /api/artists/[id]/members', okStatus: 200, failStatus: 409,
     ok: () => call(members.PUT, '', { method: 'PUT', cookie: admin, params: p(6), body: { members: [{ member_id: 2, share_pct: 60 }, { member_id: 4, share_pct: 40 }] } }),
     fail: () => call(members.PUT, '', { method: 'PUT', cookie: admin, params: p(6), body: { members: [{ member_id: 2, share_pct: 59 }, { member_id: 4, share_pct: 40 }] } }) },
+  { route: 'GET /api/artists/[id]/tracks', okStatus: 200, failStatus: 403,
+    ok: () => call(artistTracks.GET, '', { cookie: auditor, params: p(1) }), fail: () => call(artistTracks.GET, '', { cookie: nova, params: p(1) }) },
+  { route: 'POST /api/artists/[id]/tracks', okStatus: 201, failStatus: 409,
+    ok: () => call(artistTracks.POST, '', { method: 'POST', cookie: admin, params: p(1), body: { title: 'Sweep Profile Track', isrc: 'INSWP3000003', splits: [{ artist_id: 1, share_pct: 100 }], activate: true } }),
+    fail: () => call(artistTracks.POST, '', { method: 'POST', cookie: admin, params: p(1), body: { title: 'Sweep Short', isrc: 'INSWP3000004', splits: [{ artist_id: 1, share_pct: 90 }], activate: true } }) },
   { route: 'GET /api/tracks', okStatus: 200, failStatus: 401,
     ok: () => call(tracks.GET, '/api/tracks', { cookie: nova }), fail: () => call(tracks.GET, '/api/tracks') },
   { route: 'POST /api/tracks', okStatus: 201, failStatus: 400,

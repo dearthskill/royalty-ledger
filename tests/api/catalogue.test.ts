@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import * as artists from '@/app/api/artists/route';
 import * as artist from '@/app/api/artists/[id]/route';
 import * as members from '@/app/api/artists/[id]/members/route';
+import * as artistTracks from '@/app/api/artists/[id]/tracks/route';
 import * as tracks from '@/app/api/tracks/route';
 import * as track from '@/app/api/tracks/[id]/route';
 import { GET as search } from '@/app/api/search/route';
@@ -127,6 +128,59 @@ describe('tracks', () => {
     expect((await call(track.DELETE, `/api/tracks/${id}`, { method: 'DELETE', cookie: admin, params: { id } })).status).toBe(204);
     const used = await call(track.DELETE, '/api/tracks/1', { method: 'DELETE', cookie: admin, params: { id: '1' } });
     expect(used.status).toBe(409);
+  });
+});
+
+describe('artist profile tracks', () => {
+  it('GET lists primary and contributor tracks (admin, auditor); artists are refused', async () => {
+    // Mira (3) is primary on Glass Harbour and Unfinished Demo, and a contributor on Midnight Static's active v2
+    const r = await call(artistTracks.GET, '', { cookie: auditor, params: { id: '3' } });
+    expect(r.status).toBe(200);
+    const byTitle = Object.fromEntries(r.body.tracks.map((t: { title: string; role: string }) => [t.title, t.role]));
+    expect(byTitle).toMatchObject({ 'Glass Harbour': 'primary', 'Unfinished Demo': 'primary', 'Midnight Static': 'contributor' });
+    expect((await call(artistTracks.GET, '', { cookie: mira, params: { id: '3' } })).status).toBe(403);
+    expect((await call(artistTracks.GET, '', { cookie: admin, params: { id: '999' } })).status).toBe(404);
+  });
+
+  it('POST creates the track with its contributors and can activate the split in the same transaction', async () => {
+    const r = await call(artistTracks.POST, '', { method: 'POST', cookie: admin, params: { id: '4' }, body: {
+      title: 'Profile Duet', isrc: 'INPRF2600001', released_on: '2026-11-15', activate: true,
+      splits: [{ artist_id: 4, share_pct: 70 }, { artist_id: 2, share_pct: '30' }] } });
+    expect(r.status).toBe(201);
+    expect(r.body.track).toMatchObject({ title: 'Profile Duet', primary_artist_id: 4, primary_artist_name: 'Lina', active_version: 1 });
+    expect(r.body.contract).toMatchObject({ version: 1, status: 'active', total_share_pct: '100.00' });
+    // the contributor sees it on their own profile list
+    const kai = await call(artistTracks.GET, '', { cookie: admin, params: { id: '2' } });
+    expect(kai.body.tracks).toContainEqual(expect.objectContaining({ title: 'Profile Duet', role: 'contributor', share_pct: '30.00', contract_status: 'active' }));
+  });
+
+  it('POST without activation leaves a draft that may total less than 100%', async () => {
+    const r = await call(artistTracks.POST, '', { method: 'POST', cookie: admin, params: { id: '4' }, body: {
+      title: 'Profile Sketch', isrc: 'INPRF2600002', splits: [{ artist_id: 4, share_pct: 50 }] } });
+    expect(r.status).toBe(201);
+    expect(r.body.contract).toMatchObject({ status: 'draft', total_share_pct: '50.00' });
+    expect(r.body.track.active_version).toBeNull();
+  });
+
+  it('a failed activation (90%) returns the database message and creates nothing', async () => {
+    const r = await call(artistTracks.POST, '', { method: 'POST', cookie: admin, params: { id: '4' }, body: {
+      title: 'Profile Short', isrc: 'INPRF2600003', activate: true,
+      splits: [{ artist_id: 4, share_pct: 60 }, { artist_id: 2, share_pct: 30 }] } });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toMatch(/total 90 percent, must be exactly 100/);
+    const all = await call(tracks.GET, '/api/tracks', { cookie: admin });
+    expect(all.body.tracks.map((t: { isrc: string }) => t.isrc)).not.toContain('INPRF2600003');
+  });
+
+  it('POST validates input and role', async () => {
+    const body = { title: 'X', isrc: 'INPRF2600009', splits: [{ artist_id: 4, share_pct: 100 }] };
+    expect((await call(artistTracks.POST, '', { method: 'POST', cookie: admin, params: { id: '4' }, body: { ...body, splits: [] } })).status).toBe(400);
+    expect((await call(artistTracks.POST, '', { method: 'POST', cookie: admin, params: { id: '4' },
+      body: { ...body, splits: [{ artist_id: 4, share_pct: 50 }, { artist_id: 4, share_pct: 50 }] } })).status).toBe(400);
+    expect((await call(artistTracks.POST, '', { method: 'POST', cookie: admin, params: { id: '4' },
+      body: { ...body, splits: [{ artist_id: 999, share_pct: 100 }] } })).status).toBe(409);   // FK: unknown contributor
+    expect((await call(artistTracks.POST, '', { method: 'POST', cookie: admin, params: { id: '999' }, body })).status).toBe(404);
+    expect((await call(artistTracks.POST, '', { method: 'POST', cookie: auditor, params: { id: '4' }, body })).status).toBe(403);
   });
 });
 

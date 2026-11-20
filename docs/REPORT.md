@@ -25,7 +25,7 @@ out of sync, cannot be audited, and routinely pay someone twice or not at all. T
 | # | Requirement | Role | Where |
 |---|---|---|---|
 | F1 | Manage artists and groups; set group member shares (total 100%, groups inside groups, no cycles) | Admin | `/admin/artists`, `/api/artists/**` |
-| F2 | Manage tracks; full-text search over tracks and artists | Admin (search: all) | `/admin/tracks`, `/api/tracks/**`, `/api/search` |
+| F2 | Manage tracks: add a track from the artist's profile with its contributing artists and shares; full-text search over tracks and artists | Admin (search: all) | `/admin/artists/[id]`, `/admin/tracks`, `/api/artists/:id/tracks`, `/api/tracks/**`, `/api/search` |
 | F3 | Versioned contracts: draft → active → superseded; edit splits only on a draft; activate only at 100% | Admin | `/admin/tracks/[id]`, `/api/contracts/**` |
 | F4 | See the effective split of a track: who is really paid, through nested groups, and why | Admin, Auditor | `/api/tracks/:id/effective-split` |
 | F5 | Upload platform usage reports; void duplicates and bot plays; dispute, resolve, purge | Admin | WP2 / WP7 (section 9) |
@@ -265,15 +265,19 @@ Checks: `CHECK ((plays >= 0))`
 * **Views.** `v_active_split` (track → resolved payees) and `v_contract_overview` (versions with totals).
 
 ### 6.2 API and screens
-`/api/artists`, `/api/artists/:id/members`, `/api/tracks`, `/api/tracks/:id/contracts`, `/api/contracts/:id/{splits,activate}`,
+`/api/artists`, `/api/artists/:id/{members,tracks}`, `/api/tracks`, `/api/tracks/:id/contracts`, `/api/contracts/:id/{splits,activate}`,
 `/api/tracks/:id/{effective-split,history}`, `/api/search` (full contract: `docs/API_CONTRACT.md`).
-Screens: `/admin/artists` (group member editor), `/admin/tracks`, `/admin/tracks/[id]` (versions, draft editor,
+Screens: `/admin/artists` (list), `/admin/artists/[id]` (artist profile: group member editor, the artist's tracks, and
+"Add a track" with contributing artists; the track, its version-1 draft and the splits are written in one transaction,
+optionally activated there too), `/admin/tracks`, `/admin/tracks/[id]` (versions, draft editor,
 effective split, history).
 
 The share editor shows a live total (computed in cents, so 33.33 + 33.33 + 33.34 is exactly 100) but does not block
 saving. The database decides, and its message reaches the user unchanged:
 
 ![Member shares rejected by the database](screenshots/6-artists-members-error.png)
+
+![Artist profile: a new track whose contributors total 90% is refused, nothing is created](screenshots/12-artist-profile-split-error.png)
 
 ![Track page: effective split through nested groups, versions, history](screenshots/6-track-nested-split.png)
 

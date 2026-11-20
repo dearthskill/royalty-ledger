@@ -79,7 +79,8 @@ export function TrackDetail({ id }: { id: number }) {
         <Link href="/admin/tracks" className="text-sm text-indigo-700 hover:underline dark:text-indigo-300">← Tracks</Link>
         <h1 className="text-2xl font-semibold">{track.title}</h1>
         <div className="text-sm text-slate-500">
-          <span className="font-mono">{track.isrc}</span> · {track.primary_artist_name} · released {track.released_on ?? '–'}
+          <span className="font-mono">{track.isrc}</span> ·{' '}
+          <Link className="hover:underline" href={`/admin/artists/${track.primary_artist_id}`}>{track.primary_artist_name}</Link> · released {track.released_on ?? '–'}
         </div>
       </div>
 

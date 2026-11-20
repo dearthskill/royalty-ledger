@@ -27,7 +27,7 @@ export function SearchBox() {
           {results.map(r => (
             <li key={`${r.kind}-${r.id}`}>
               <Link onClick={() => setQ('')} className="block px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-800"
-                href={r.kind === 'track' ? `/admin/tracks/${r.id}` : `/admin/artists#artist-${r.id}`}>
+                href={r.kind === 'track' ? `/admin/tracks/${r.id}` : `/admin/artists/${r.id}`}>
                 <span className="mr-2 text-xs uppercase text-slate-400">{r.kind}</span>{r.label}
               </Link>
             </li>
